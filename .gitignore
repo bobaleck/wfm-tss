@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+env/
+.venv/
+.env
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+dist/
+.pnp
+.pnp.js
+
+# Vite
+frontend/dist/
+frontend/.vite/
+
+# Env files (кроме примера)
+backend/.env
+frontend/.env.local
+frontend/.env.production
+
+# Logs
+*.log
+*.log.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# APScheduler
+*.jobstore
+
+# Coverage
+.coverage
+htmlcov/
