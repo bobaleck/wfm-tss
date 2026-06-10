@@ -129,8 +129,8 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <StatCard
           title="Сотрудников"
-          value={activeProject ? employees.length : '—'}
-          sub={activeProject ? `Работают: ${empActive} · Новых: ${empNew}` : 'Выберите проект'}
+          value={activeProject ? empActive : '—'}
+          sub={activeProject ? `Новых: ${empNew} · Уволено: ${empFired} · Всего: ${employees.length}` : 'Выберите проект'}
           icon={<Users size={20} />}
           color="blue"
         />
@@ -216,13 +216,13 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <p className="text-xs text-slate-500">Сотрудников</p>
-                  <p className="text-xl font-bold text-slate-900">{employees.length}</p>
+                  <p className="text-xl font-bold text-slate-900">{empActive}</p>
                 </div>
               </div>
               <div className="flex gap-3 text-xs">
-                <span className="text-green-600">Работают: {empActive}</span>
                 <span className="text-blue-600">Новых: {empNew}</span>
                 <span className="text-slate-400">Уволено: {empFired}</span>
+                <span className="text-slate-500">Всего: {employees.length}</span>
               </div>
             </div>
           )}

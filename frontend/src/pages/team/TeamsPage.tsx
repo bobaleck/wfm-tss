@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, ChevronRight, ChevronDown, UsersRound, Save, User, UserPlus } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronRight, ChevronDown, UsersRound, Save, User, UserPlus, X } from 'lucide-react'
 import api from '@/api/client'
 import type { Team, Employee } from '@/types'
 import { TEAM_TYPE_LABELS } from '@/types'
@@ -65,10 +65,11 @@ function TeamForm({ team, teams, onClose }: { team?: Team | null; teams: Team[];
   )
 }
 
-// ─── Добавить сотрудника в команду ──────────────────────────────────────────
 function AddMemberModal({ team, onClose }: { team: Team; onClose: () => void }) {
   const qc = useQueryClient()
-  const [selectedId, setSelectedId] = useState<number | ''>('')
+  const [search, setSearch] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [adding, setAdding] = useState(false)
 
   const { data: employees } = useQuery({
     queryKey: ['employees-all'],
@@ -79,70 +80,147 @@ function AddMemberModal({ team, onClose }: { team: Team; onClose: () => void }) 
     mutationFn: (empId: number) => api.put(`/employees/${empId}`, { team_id: team.id }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['teams'] })
-      qc.invalidateQueries({ queryKey: ['employees'] })
-      onClose()
+      qc.invalidateQueries({ queryKey: ['employees-all'] })
     },
   })
 
-  const available = (employees || []).filter((e) => e.team_id !== team.id && e.employment_status !== 'fired')
+  const available = (employees || []).filter((e) => e.employment_status !== 'fired')
+  const filtered = search
+    ? available.filter((e) => (e.full_name || e.naumen_login || '').toLowerCase().includes(search.toLowerCase()))
+    : available
+
+  const toggle = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const handleAdd = async () => {
+    setAdding(true)
+    try {
+      for (const id of selectedIds) {
+        await mutation.mutateAsync(id)
+      }
+    } finally {
+      setAdding(false)
+    }
+    onClose()
+  }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="bg-slate-50 rounded-lg p-3 text-sm">
         <p className="font-medium text-slate-800">Команда: {team.name}</p>
         <p className="text-slate-500 text-xs mt-0.5">Сейчас: {team.employee_count} сотрудников</p>
       </div>
-      <div>
-        <label className="label">Сотрудник</label>
-        <select className="input" value={selectedId} onChange={(e) => setSelectedId(e.target.value ? +e.target.value : '')}>
-          <option value="">— выберите сотрудника —</option>
-          {available.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.full_name}{e.team_name ? ` (сейчас: ${e.team_name})` : ''}
-            </option>
-          ))}
-        </select>
-        {available.length === 0 && <p className="text-xs text-slate-400 mt-1">Нет сотрудников без этой команды</p>}
+      <input
+        className="input"
+        placeholder="Поиск по имени или логину..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      <div className="border border-slate-200 rounded-lg overflow-y-auto max-h-72">
+        {filtered.length === 0 ? (
+          <p className="text-sm text-slate-400 text-center py-4">Нет сотрудников</p>
+        ) : (
+          filtered.map((emp) => (
+            <label
+              key={emp.id}
+              className={`flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0 ${selectedIds.has(emp.id) ? 'bg-brand-50' : ''}`}
+            >
+              <input
+                type="checkbox"
+                checked={selectedIds.has(emp.id)}
+                onChange={() => toggle(emp.id)}
+                className="rounded"
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-slate-900 truncate">{emp.full_name}</p>
+                {emp.team_name && <p className="text-xs text-slate-400 truncate">Команда: {emp.team_name}</p>}
+              </div>
+              {emp.employment_status === 'new' && <span className="text-xs text-blue-600 flex-shrink-0">Новый</span>}
+            </label>
+          ))
+        )}
       </div>
+      {selectedIds.size > 0 && (
+        <p className="text-xs text-slate-500">Выбрано: {selectedIds.size}</p>
+      )}
       <div className="flex justify-end gap-2">
         <button onClick={onClose} className="btn-secondary">Отмена</button>
         <button
-          onClick={() => selectedId !== '' && mutation.mutate(+selectedId)}
-          disabled={selectedId === '' || mutation.isPending}
+          onClick={handleAdd}
+          disabled={selectedIds.size === 0 || adding}
           className="btn-primary"
         >
-          <UserPlus size={14} /> Добавить
+          <UserPlus size={14} /> Добавить{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
         </button>
       </div>
     </div>
   )
 }
 
-function TeamNode({ team, allTeams, level, onEdit, onDelete, onAddMember }:
-  { team: Team; allTeams: Team[]; level: number; onEdit: (t: Team) => void; onDelete: (t: Team) => void; onAddMember: (t: Team) => void }) {
-  const [expanded, setExpanded] = useState(level === 0)
+function TeamNode({ team, allTeams, allEmployees, level, onEdit, onDelete, onAddMember }: {
+  team: Team
+  allTeams: Team[]
+  allEmployees: Employee[]
+  level: number
+  onEdit: (t: Team) => void
+  onDelete: (t: Team) => void
+  onAddMember: (t: Team) => void
+}) {
+  const qc = useQueryClient()
+  const [childrenOpen, setChildrenOpen] = useState(level === 0)
+  const [membersOpen, setMembersOpen] = useState(false)
+
   const children = allTeams.filter((t) => t.parent_id === team.id)
+  const members = allEmployees.filter((e) => e.team_id === team.id)
   const typeLabel = TEAM_TYPE_LABELS[team.team_type] ?? team.team_type
+
+  const removeMember = useMutation({
+    mutationFn: (empId: number) => api.put(`/employees/${empId}`, { team_id: null }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['teams'] })
+      qc.invalidateQueries({ queryKey: ['employees-all'] })
+    },
+  })
 
   return (
     <div>
+      {/* Строка команды */}
       <div
-        className="flex items-center gap-2 py-2.5 hover:bg-slate-50 group border-b border-slate-50"
+        className={`flex items-center gap-2 py-2.5 hover:bg-slate-50 group border-b border-slate-50 cursor-pointer select-none ${membersOpen ? 'bg-brand-50/40' : ''}`}
         style={{ paddingLeft: `${16 + level * 24}px`, paddingRight: '16px' }}
+        onClick={() => setMembersOpen((v) => !v)}
       >
-        <button onClick={() => setExpanded(!expanded)} className="w-5 h-5 flex items-center justify-center text-slate-400 flex-shrink-0">
-          {children.length > 0 ? (expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : <span className="w-1 h-1 rounded-full bg-slate-300 block" />}
+        {/* Chevron дочерних команд */}
+        <button
+          onClick={(e) => { e.stopPropagation(); setChildrenOpen((v) => !v) }}
+          className="w-5 h-5 flex items-center justify-center text-slate-400 flex-shrink-0"
+        >
+          {children.length > 0
+            ? (childrenOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />)
+            : <span className="w-1 h-1 rounded-full bg-slate-300 block" />}
         </button>
-        <div className="flex-1 min-w-0">
+
+        {/* Chevron участников + название */}
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          {membersOpen
+            ? <ChevronDown size={13} className="text-brand-500 flex-shrink-0" />
+            : <ChevronRight size={13} className="text-slate-300 flex-shrink-0" />}
           <span className="text-sm font-medium text-slate-900">{team.name}</span>
-          <span className="ml-2 text-xs text-slate-400">{typeLabel}</span>
+          <span className="text-xs text-slate-400">{typeLabel}</span>
           {team.leader_name && (
-            <span className="ml-2 text-xs text-slate-500 inline-flex items-center gap-1">
+            <span className="text-xs text-slate-500 inline-flex items-center gap-1">
               <User size={11} /> {team.leader_name}
             </span>
           )}
         </div>
+
         <Badge label={`${team.employee_count} чел.`} color="blue" />
+
         <button
           onClick={(e) => { e.stopPropagation(); onAddMember(team) }}
           className="flex items-center gap-1 px-2 py-1 text-xs text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded-lg font-medium transition-colors ml-2"
@@ -150,13 +228,75 @@ function TeamNode({ team, allTeams, level, onEdit, onDelete, onAddMember }:
         >
           <UserPlus size={11} /> Добавить
         </button>
+
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <button onClick={(e) => { e.stopPropagation(); onEdit(team) }} className="p-1.5 hover:bg-blue-50 rounded text-slate-400 hover:text-blue-600"><Pencil size={12} /></button>
           <button onClick={(e) => { e.stopPropagation(); onDelete(team) }} className="p-1.5 hover:bg-red-50 rounded text-slate-400 hover:text-red-600"><Trash2 size={12} /></button>
         </div>
       </div>
-      {expanded && children.map((c) => (
-        <TeamNode key={c.id} team={c} allTeams={allTeams} level={level + 1} onEdit={onEdit} onDelete={onDelete} onAddMember={onAddMember} />
+
+      {/* Список участников */}
+      {membersOpen && (
+        <div
+          className="border-b border-slate-200 bg-slate-50"
+          style={{ paddingLeft: `${40 + level * 24}px` }}
+        >
+          {members.length === 0 ? (
+            <p className="px-4 py-3 text-xs text-slate-400 italic">
+              Участников нет — нажмите «Добавить», чтобы добавить сотрудника
+            </p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">ФИО</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Должность</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Логин Naumen</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Статус</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((emp) => (
+                  <tr key={emp.id} className="border-b border-slate-100 hover:bg-white">
+                    <td className="px-4 py-2 font-medium text-slate-900">{emp.full_name}</td>
+                    <td className="px-4 py-2 text-slate-500 text-xs">{emp.position || '—'}</td>
+                    <td className="px-4 py-2 text-slate-400 font-mono text-xs">{emp.naumen_login || '—'}</td>
+                    <td className="px-4 py-2 text-xs">
+                      {emp.employment_status === 'active' && <span className="text-green-600">Работает</span>}
+                      {emp.employment_status === 'new' && <span className="text-blue-600">Новый</span>}
+                      {emp.employment_status === 'fired' && <span className="text-slate-400">Уволен</span>}
+                    </td>
+                    <td className="px-4 py-2 text-right pr-4">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeMember.mutate(emp.id) }}
+                        disabled={removeMember.isPending}
+                        className="p-1 hover:bg-red-50 rounded text-slate-300 hover:text-red-500 transition-colors"
+                        title="Убрать из команды"
+                      >
+                        <X size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Дочерние команды */}
+      {childrenOpen && children.map((c) => (
+        <TeamNode
+          key={c.id}
+          team={c}
+          allTeams={allTeams}
+          allEmployees={allEmployees}
+          level={level + 1}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onAddMember={onAddMember}
+        />
       ))}
     </div>
   )
@@ -173,6 +313,11 @@ export default function TeamsPage() {
     queryFn: () => api.get('/teams').then((r) => r.data as Team[]),
   })
 
+  const { data: allEmployees = [] } = useQuery({
+    queryKey: ['employees-all'],
+    queryFn: () => api.get('/employees', { params: { limit: 500 } }).then((r) => r.data as Employee[]),
+  })
+
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.delete(`/teams/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
@@ -185,7 +330,7 @@ export default function TeamsPage() {
     <div>
       <PageHeader
         title="Команды"
-        subtitle="Иерархическая структура: Управление → Отдел → Группа операторов"
+        subtitle="Нажмите на строку команды, чтобы увидеть состав"
         actions={
           <button className="btn-primary" onClick={() => setShowForm(true)}>
             <Plus size={16} /> Добавить команду
@@ -204,7 +349,12 @@ export default function TeamsPage() {
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-20">Состав</span>
             </div>
             {roots.map((t) => (
-              <TeamNode key={t.id} team={t} allTeams={allTeams} level={0}
+              <TeamNode
+                key={t.id}
+                team={t}
+                allTeams={allTeams}
+                allEmployees={allEmployees}
+                level={0}
                 onEdit={setEditTeam}
                 onDelete={(t) => confirm(`Удалить команду "${t.name}"?`) && deleteMutation.mutate(t.id)}
                 onAddMember={setAddMemberTeam}

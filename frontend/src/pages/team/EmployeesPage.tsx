@@ -289,6 +289,8 @@ function EmployeeRow({
   )
 }
 
+type EmpSortKey = 'full_name' | 'employment_status' | 'team_name' | 'position' | 'preferred_schedule' | 'naumen_login'
+
 // ─── Главная страница сотрудников ────────────────────────────────────────────
 export default function EmployeesPage() {
   const [search, setSearch] = useState('')
@@ -300,6 +302,8 @@ export default function EmployeesPage() {
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<string | null>(null)
+  const [sortKey, setSortKey] = useState<EmpSortKey>('full_name')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const qc = useQueryClient()
   const { activeProject } = useProjectStore()
 
@@ -326,6 +330,19 @@ export default function EmployeesPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['employees'] }),
   })
 
+  const [bulkActivating, setBulkActivating] = useState(false)
+  const handleBulkActivate = async (ids: number[]) => {
+    setBulkActivating(true)
+    try {
+      for (const id of ids) {
+        await api.put(`/employees/${id}`, { employment_status: 'active' })
+      }
+      qc.invalidateQueries({ queryKey: ['employees'] })
+    } finally {
+      setBulkActivating(false)
+    }
+  }
+
   const handleSync = async () => {
     if (!activeProject) return
     setSyncing(true); setSyncResult(null)
@@ -341,7 +358,20 @@ export default function EmployeesPage() {
     } finally { setSyncing(false) }
   }
 
-  const displayData = (data || []).filter((emp) => !hideFired || emp.employment_status !== 'fired')
+  const handleSort = (key: EmpSortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortKey(key); setSortDir('asc') }
+  }
+
+  const displayData = [...(data || []).filter((emp) => !hideFired || emp.employment_status !== 'fired')]
+    .sort((a, b) => {
+      const av = (a as any)[sortKey] ?? ''
+      const bv = (b as any)[sortKey] ?? ''
+      const cmp = String(av).localeCompare(String(bv), 'ru')
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+
+  const newEmployees = displayData.filter((e) => e.employment_status === 'new')
 
   return (
     <div>
@@ -386,6 +416,20 @@ export default function EmployeesPage() {
           {hideFired ? <EyeOff size={14} /> : <Eye size={14} />}
           {hideFired ? 'Уволенные скрыты' : 'Показать всех'}
         </button>
+        {newEmployees.length > 0 && (
+          <button
+            onClick={() => {
+              if (confirm(`Активировать всех новых сотрудников? (${newEmployees.length} чел.)`)) {
+                handleBulkActivate(newEmployees.map((e) => e.id))
+              }
+            }}
+            disabled={bulkActivating}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-green-200 bg-green-50 text-green-700 hover:bg-green-100 transition-colors"
+          >
+            {bulkActivating ? <Loader2 size={14} className="animate-spin" /> : <UserCheck size={14} />}
+            Активировать новых ({newEmployees.length})
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -405,9 +449,28 @@ export default function EmployeesPage() {
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100">
                   <th className="w-6 px-4 py-3" />
-                  {['ФИО', 'Статус', 'Команда', 'Должность', 'График', 'Naumen', ''].map((h) => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                  {([
+                    { label: 'ФИО', key: 'full_name' },
+                    { label: 'Статус', key: 'employment_status' },
+                    { label: 'Команда', key: 'team_name' },
+                    { label: 'Должность', key: 'position' },
+                    { label: 'График', key: 'preferred_schedule' },
+                    { label: 'Naumen', key: 'naumen_login' },
+                  ] as { label: string; key: EmpSortKey }[]).map(({ label, key }) => (
+                    <th
+                      key={key}
+                      onClick={() => handleSort(key)}
+                      className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:text-slate-700 group"
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {label}
+                        <span className={`transition-opacity ${sortKey === key ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
+                          {sortKey === key && sortDir === 'asc' ? <ChevronDown size={12} /> : <ChevronDown size={12} className="rotate-180" />}
+                        </span>
+                      </span>
+                    </th>
                   ))}
+                  <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody>

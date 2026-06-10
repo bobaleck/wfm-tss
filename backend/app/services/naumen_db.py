@@ -160,7 +160,9 @@ def get_operator_load(partner_uuid: str, begin_date: str, end_date: str,
                     EXTRACT(EPOCH FROM (cl_rd.ended - cl_rd.connected))
                 )
             )::numeric, 0) AS total_talk_sec,
-            ROUND(AVG(que.unblocked_time_duration / 1000.0)::numeric, 1) AS avg_answer_sec,
+            ROUND(AVG(que.unblocked_time_duration / 1000.0) FILTER (
+                WHERE que.final_stage = 'operator'
+            )::numeric, 1) AS avg_answer_sec,
             ROUND(100.0 * COUNT(*) FILTER (
                 WHERE que.final_stage = 'operator'
                   AND que.unblocked_time_duration <= aq.calllimit * 1000
@@ -320,42 +322,67 @@ def get_operator_sessions(logins: list, begin_date: str, end_date: str,
                           overrides: dict = None) -> list[dict]:
     """
     История сессий операторов по дням из status_changes.
-    break_count — число переходов normal → non-normal (реальные "уходы с линии").
+    first_login  — первый вход в статус available (начало смены).
+    last_login   — последний вход в статус available (последнее возвращение на линию).
+    last_logout  — момент перехода в статус offline (конец смены).
+    break_count  — число переходов available → non-available/non-offline.
     """
     if not logins:
         return []
     query = """
-    WITH raw AS (
+    WITH events AS (
+        -- Берём события из range; duration НЕ используем из VIEW —
+        -- вычисляем сами через LEAD, чтобы не зависеть от глобально
+        -- посчитанного поля, которое может охватывать дни вне диапазона.
         SELECT
             sc.login,
-            DATE(sc.entered)                                               AS work_date,
             sc.status,
             sc.entered,
-            sc.duration,
-            sc.entered + make_interval(secs => sc.duration::float)        AS status_end,
-            LAG(sc.status) OVER (
-                PARTITION BY sc.login, DATE(sc.entered)
+            LEAD(sc.entered) OVER (
+                PARTITION BY sc.login
                 ORDER BY sc.entered
-            )                                                              AS prev_status
+            )                                                             AS next_entered
         FROM status_changes sc
         WHERE sc.login = ANY(%(logins)s)
           AND sc.entered >= %(begin_date)s::timestamp
           AND sc.entered <  %(end_date)s::timestamp
+    ),
+    raw AS (
+        SELECT
+            login,
+            DATE(entered)                                                 AS work_date,
+            status,
+            entered,
+            -- duration = время до следующего события, но не дальше конца суток.
+            -- Если следующего события нет в диапазоне (LEAD = NULL) — 0.
+            GREATEST(0, LEAST(
+                COALESCE(EXTRACT(EPOCH FROM (next_entered - entered)), 0),
+                EXTRACT(EPOCH FROM (DATE_TRUNC('day', entered) + INTERVAL '1 day' - entered))
+            ))                                                            AS duration,
+            LAG(status) OVER (
+                PARTITION BY login, DATE(entered)
+                ORDER BY entered
+            )                                                             AS prev_status
+        FROM events
     )
     SELECT
-        login                                                                     AS login,
-        work_date                                                                 AS work_date,
-        MIN(entered)                                                              AS first_login,
-        MAX(entered) FILTER (WHERE status = 'normal')                            AS last_login,
-        MAX(status_end)                                                           AS last_logout,
-        ROUND(SUM(duration)::numeric, 0)                                         AS total_sec,
-        ROUND(SUM(duration) FILTER (WHERE status = 'normal')::numeric, 0)        AS normal_sec,
-        ROUND(SUM(duration) FILTER (WHERE status <> 'normal')::numeric, 0)       AS non_normal_sec,
+        login                                                                              AS login,
+        work_date                                                                          AS work_date,
+        MIN(entered) FILTER (WHERE status IN ('normal', 'available'))                     AS first_login,
+        COALESCE(
+            MAX(entered) FILTER (WHERE status = 'offline'),
+            MAX(entered + make_interval(secs => duration::float))
+        )                                                                                  AS last_logout,
+        ROUND(SUM(duration)::numeric, 0)                                                   AS total_sec,
+        ROUND(SUM(duration) FILTER (WHERE status IN ('normal', 'available'))::numeric, 0) AS normal_sec,
+        ROUND(SUM(duration) FILTER (
+            WHERE status NOT IN ('normal', 'available', 'offline')
+        )::numeric, 0)                                                                    AS non_normal_sec,
         COUNT(*) FILTER (
-            WHERE status <> 'normal'
-              AND (prev_status = 'normal' OR prev_status IS NULL)
-        )                                                                         AS break_count,
-        STRING_AGG(DISTINCT status, ', ' ORDER BY status)                        AS statuses_seen
+            WHERE status NOT IN ('normal', 'available', 'offline')
+              AND (prev_status IN ('normal', 'available') OR prev_status IS NULL)
+        )                                                                                  AS break_count,
+        STRING_AGG(DISTINCT status, ', ' ORDER BY status)                                 AS statuses_seen
     FROM raw
     GROUP BY login, work_date
     ORDER BY login, work_date

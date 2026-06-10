@@ -153,7 +153,6 @@ export interface OperatorSession {
   employee_name: string | null
   work_date: string
   first_login: string | null
-  last_login: string | null
   last_logout: string | null
   total_sec: number | null
   normal_sec: number | null

@@ -12,6 +12,29 @@ import Badge from '@/components/ui/Badge'
 import EmptyState from '@/components/common/EmptyState'
 import { format, subDays, addDays } from 'date-fns'
 
+type ShiftSortKey = 'employee_name' | 'shift_date' | 'start_time' | 'end_time' | 'schedule_name' | 'status' | 'actual_hours_worked'
+type SessionSortKey = 'employee_name' | 'login' | 'first_login' | 'last_logout' | 'normal_sec' | 'non_normal_sec' | 'break_count'
+
+function SortTh({ label, sortKey, current, dir, onSort, className = '' }: {
+  label: string; sortKey: string; current: string; dir: 'asc' | 'desc'
+  onSort: (k: any) => void; className?: string
+}) {
+  const active = current === sortKey
+  return (
+    <th
+      onClick={() => onSort(sortKey)}
+      className={`text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:text-slate-700 group ${className}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <span className={`transition-opacity ${active ? 'opacity-100 text-brand-500' : 'opacity-0 group-hover:opacity-40'}`}>
+          {active && dir === 'asc' ? '↑' : '↓'}
+        </span>
+      </span>
+    </th>
+  )
+}
+
 const STATUS_COLOR: Record<string, any> = {
   planned: 'blue', confirmed: 'green', completed: 'gray', cancelled: 'red',
 }
@@ -216,6 +239,20 @@ export default function ShiftsPage() {
     enabled: !!activeProject && view === 'past',
   })
 
+  const [shiftSortKey, setShiftSortKey] = useState<ShiftSortKey>('shift_date')
+  const [shiftSortDir, setShiftSortDir] = useState<'asc' | 'desc'>('asc')
+  const [sessSortKey, setSessSortKey] = useState<SessionSortKey>('first_login')
+  const [sessSortDir, setSessSortDir] = useState<'asc' | 'desc'>('asc')
+
+  const handleShiftSort = (key: ShiftSortKey) => {
+    if (shiftSortKey === key) setShiftSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else { setShiftSortKey(key); setShiftSortDir('asc') }
+  }
+  const handleSessSort = (key: SessionSortKey) => {
+    if (sessSortKey === key) setSessSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSessSortKey(key); setSessSortDir('asc') }
+  }
+
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set())
   const toggleDate = (date: string) =>
     setExpandedDates((prev) => { const n = new Set(prev); n.has(date) ? n.delete(date) : n.add(date); return n })
@@ -231,12 +268,18 @@ export default function ShiftsPage() {
 
   const filtered = useMemo(() => {
     if (!data) return []
-    return data.filter((sh) => {
+    const f = data.filter((sh) => {
       if (view === 'past') return sh.shift_date < today
       if (view === 'active') return sh.shift_date === today
       return sh.shift_date > today
     })
-  }, [data, view, today])
+    return [...f].sort((a, b) => {
+      const av = (a as any)[shiftSortKey] ?? ''
+      const bv = (b as any)[shiftSortKey] ?? ''
+      const cmp = String(av).localeCompare(String(bv), 'ru')
+      return shiftSortDir === 'asc' ? cmp : -cmp
+    })
+  }, [data, view, today, shiftSortKey, shiftSortDir])
 
   const needsReview = (data || []).filter((sh) => (sh as any).needs_review).length
 
@@ -315,14 +358,19 @@ export default function ShiftsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100">
-                  {[
-                    'Сотрудник', 'Дата',
-                    'Нач. план', 'Кон. план', 'Плановые ч',
-                    ...(view === 'past' ? ['Нач. факт', 'Кон. факт', 'Отработано ч'] : []),
-                    'График', 'Статус', '',
-                  ].map((h) => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                  ))}
+                  <SortTh label="Сотрудник" sortKey="employee_name" current={shiftSortKey} dir={shiftSortDir} onSort={handleShiftSort} />
+                  <SortTh label="Дата" sortKey="shift_date" current={shiftSortKey} dir={shiftSortDir} onSort={handleShiftSort} />
+                  <SortTh label="Нач. план" sortKey="start_time" current={shiftSortKey} dir={shiftSortDir} onSort={handleShiftSort} />
+                  <SortTh label="Кон. план" sortKey="end_time" current={shiftSortKey} dir={shiftSortDir} onSort={handleShiftSort} />
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">Плановые ч</th>
+                  {view === 'past' && <>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">Нач. факт</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">Кон. факт</th>
+                    <SortTh label="Отработано ч" sortKey="actual_hours_worked" current={shiftSortKey} dir={shiftSortDir} onSort={handleShiftSort} />
+                  </>}
+                  <SortTh label="График" sortKey="schedule_name" current={shiftSortKey} dir={shiftSortDir} onSort={handleShiftSort} />
+                  <SortTh label="Статус" sortKey="status" current={shiftSortKey} dir={shiftSortDir} onSort={handleShiftSort} />
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -427,18 +475,27 @@ export default function ShiftsPage() {
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b border-slate-200">
-                              {['ФИО', 'Логин', 'Первый вход', 'Последний вход', 'Последний выход', 'В линии (мин)', 'Паузы (мин)', 'Пауз', 'Статусы'].map((h) => (
-                                <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                              ))}
+                              <SortTh label="ФИО" sortKey="employee_name" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
+                              <SortTh label="Логин" sortKey="login" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
+                              <SortTh label="Первый вход" sortKey="first_login" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
+                              <SortTh label="Последний выход" sortKey="last_logout" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
+                              <SortTh label="В линии (мин)" sortKey="normal_sec" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
+                              <SortTh label="Паузы (мин)" sortKey="non_normal_sec" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
+                              <SortTh label="Пауз" sortKey="break_count" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
+                              <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">Статусы</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {rows.sort((a, b) => (a.first_login || '').localeCompare(b.first_login || '')).map((s, i) => (
+                            {[...rows].sort((a, b) => {
+                              const av = (a as any)[sessSortKey] ?? ''
+                              const bv = (b as any)[sessSortKey] ?? ''
+                              const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv))
+                              return sessSortDir === 'asc' ? cmp : -cmp
+                            }).map((s, i) => (
                               <tr key={i} className="border-b border-slate-100 hover:bg-white">
                                 <td className="px-4 py-2 font-medium text-slate-900">{s.employee_name || s.login}</td>
                                 <td className="px-4 py-2 text-slate-400 font-mono text-xs">{s.login}</td>
                                 <td className="px-4 py-2 text-green-700 font-medium">{s.first_login?.slice(11, 16) || '—'}</td>
-                                <td className="px-4 py-2 text-blue-600 font-medium">{s.last_login?.slice(11, 16) || '—'}</td>
                                 <td className="px-4 py-2 text-red-600">{s.last_logout?.slice(11, 16) || '—'}</td>
                                 <td className="px-4 py-2 text-blue-700 font-medium">{s.normal_sec != null ? Math.round(s.normal_sec / 60) : '—'}</td>
                                 <td className="px-4 py-2 text-slate-600">{s.non_normal_sec != null ? Math.round(s.non_normal_sec / 60) : '—'}</td>
