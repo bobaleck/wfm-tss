@@ -32,6 +32,8 @@ def _sqlite_migrate(db_engine):
         ("shifts", "actual_hours_worked TEXT"),
         ("shifts", "needs_review INTEGER DEFAULT 0"),
         ("shifts", "reconciled_at TEXT"),
+        ("tracked_projects", "target_sl INTEGER"),
+        ("tracked_projects", "is_manual INTEGER DEFAULT 0"),
     ]
     with db_engine.connect() as conn:
         for table, col_def in migrations:

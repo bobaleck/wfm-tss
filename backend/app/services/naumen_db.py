@@ -378,6 +378,9 @@ def get_operator_sessions(logins: list, begin_date: str, end_date: str,
         ROUND(SUM(duration) FILTER (
             WHERE status NOT IN ('normal', 'available', 'offline')
         )::numeric, 0)                                                                    AS non_normal_sec,
+        ROUND(SUM(duration) FILTER (
+            WHERE status != 'offline'
+        )::numeric, 0)                                                                    AS shift_sec,
         COUNT(*) FILTER (
             WHERE status NOT IN ('normal', 'available', 'offline')
               AND (prev_status IN ('normal', 'available') OR prev_status IS NULL)
@@ -388,6 +391,87 @@ def get_operator_sessions(logins: list, begin_date: str, end_date: str,
     ORDER BY login, work_date
     """
     return _execute(query, {"logins": logins, "begin_date": begin_date, "end_date": end_date}, overrides)
+
+
+def get_operator_timeline(login: str, work_date: str, overrides: dict = None) -> list[dict]:
+    """Все события статуса оператора за конкретный день (для визуальной линии)."""
+    query = """
+    WITH events AS (
+        SELECT
+            sc.login,
+            sc.status,
+            sc.entered,
+            LEAD(sc.entered) OVER (
+                PARTITION BY sc.login ORDER BY sc.entered
+            ) AS next_entered
+        FROM status_changes sc
+        WHERE sc.login = %(login)s
+          AND sc.entered >= %(work_date)s::timestamp
+          AND sc.entered <  (%(work_date)s::date + INTERVAL '1 day')::timestamp
+    )
+    SELECT
+        login,
+        status,
+        entered,
+        GREATEST(0, LEAST(
+            COALESCE(EXTRACT(EPOCH FROM (next_entered - entered)), 0),
+            EXTRACT(EPOCH FROM (DATE_TRUNC('day', entered) + INTERVAL '1 day' - entered))
+        )) AS duration_sec
+    FROM events
+    ORDER BY entered
+    """
+    return _execute(query, {"login": login, "work_date": work_date}, overrides)
+
+
+def get_actual_operators_by_hour(logins: list, begin_date: str, end_date: str,
+                                  overrides: dict = None) -> list[dict]:
+    """Среднее фактическое число операторов не-offline по часам суток за период."""
+    if not logins:
+        return []
+    query = """
+    WITH active_events AS (
+        SELECT
+            login,
+            DATE(entered)             AS work_date,
+            EXTRACT(HOUR FROM entered)::int AS hour_num
+        FROM status_changes
+        WHERE login = ANY(%(logins)s)
+          AND status != 'offline'
+          AND entered >= %(begin_date)s::timestamp
+          AND entered <  %(end_date)s::timestamp
+    ),
+    by_day_hour AS (
+        SELECT
+            work_date,
+            hour_num,
+            COUNT(DISTINCT login) AS operator_count
+        FROM active_events
+        GROUP BY work_date, hour_num
+    )
+    SELECT
+        hour_num,
+        ROUND(AVG(operator_count)::numeric, 1) AS avg_operators
+    FROM by_day_hour
+    GROUP BY hour_num
+    ORDER BY hour_num
+    """
+    return _execute(query, {"logins": logins, "begin_date": begin_date, "end_date": end_date}, overrides)
+
+
+def get_current_online_operators(logins: list, overrides: dict = None) -> list[dict]:
+    """Операторы с последним статусом != 'offline' (сейчас на линии/паузе)."""
+    if not logins:
+        return []
+    query = """
+    SELECT DISTINCT ON (login)
+        login,
+        status,
+        entered AS since
+    FROM status_changes
+    WHERE login = ANY(%(logins)s)
+    ORDER BY login, entered DESC
+    """
+    return _execute(query, {"logins": logins}, overrides)
 
 
 def get_operator_day_seconds(login: str, work_date: str, overrides: dict = None) -> float:

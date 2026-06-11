@@ -126,6 +126,66 @@ def get_operator_sessions(
         raise HTTPException(503, detail=str(e))
 
 
+@router.get("/operator-timeline")
+def get_operator_timeline(
+    login: str,
+    work_date: str,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Временная линия статусов оператора за один день."""
+    try:
+        data = naumen.get_operator_timeline(login, work_date, _build_overrides(db))
+        return {"data": data}
+    except Exception as e:
+        raise HTTPException(503, detail=str(e))
+
+
+@router.get("/actual-operators")
+def get_actual_operators(
+    partner_uuid: str,
+    begin: date = Query(...),
+    end: date = Query(...),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Среднее фактическое число операторов по часам суток за период."""
+    if end <= begin:
+        raise HTTPException(400, detail="end должна быть больше begin")
+    employees = db.query(Employee).filter(
+        Employee.project_uuid == partner_uuid,
+        Employee.naumen_login.isnot(None),
+    ).all()
+    logins = [e.naumen_login for e in employees]
+    try:
+        data = naumen.get_actual_operators_by_hour(logins, str(begin), str(end), _build_overrides(db))
+        return {"data": data}
+    except Exception as e:
+        raise HTTPException(503, detail=str(e))
+
+
+@router.get("/current-operators")
+def get_current_operators(
+    partner_uuid: str,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Текущий статус операторов проекта (последний известный статус из Naumen)."""
+    employees = db.query(Employee).filter(
+        Employee.project_uuid == partner_uuid,
+        Employee.naumen_login.isnot(None),
+    ).all()
+    login_map = {e.naumen_login: e.full_name for e in employees}
+    logins = list(login_map.keys())
+    try:
+        rows = naumen.get_current_online_operators(logins, _build_overrides(db))
+        for r in rows:
+            r["employee_name"] = login_map.get(r.get("login"), r.get("login"))
+        return {"data": rows, "total_logins": len(logins)}
+    except Exception as e:
+        raise HTTPException(503, detail=str(e))
+
+
 @router.get("/naumen-employees")
 def get_naumen_employees(
     partner_uuid: str,

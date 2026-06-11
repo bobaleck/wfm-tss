@@ -2,17 +2,14 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Save, TestTube2, CheckCircle2, XCircle, Eye, EyeOff,
-  Download, Plus, Trash2, Loader2,
 } from 'lucide-react'
 import api from '@/api/client'
-import type { IntegrationSettings, Project } from '@/types'
+import type { IntegrationSettings } from '@/types'
 import PageHeader from '@/components/common/PageHeader'
 import { PageSpinner } from '@/components/ui/Spinner'
-import { useProjectStore } from '@/store/project'
 
 export default function IntegrationsPage() {
-  const qc = useQueryClient()
-  const refreshProjectStore = useProjectStore((s) => s.fetchProjects)
+  const qc = useQueryClient() // still needed for mutation invalidation
 
   const [showPass, setShowPass] = useState(false)
   const [showKey, setShowKey] = useState(false)
@@ -69,48 +66,6 @@ export default function IntegrationsPage() {
     onSuccess: (result) => setTestApiResult(result),
     onError: (e: any) => setTestApiResult({ ok: false, message: e.response?.data?.detail || 'Ошибка' }),
   })
-
-  // Available projects loaded from NCC on demand
-  const [availableProjects, setAvailableProjects] = useState<Project[]>([])
-  const [loadingProjects, setLoadingProjects] = useState(false)
-  const [loadError, setLoadError] = useState<string | null>(null)
-
-  // Tracked projects stored in WFM DB
-  const { data: trackedProjects = [], refetch: refetchTracked } = useQuery({
-    queryKey: ['tracked-projects'],
-    queryFn: () => api.get('/integrations/tracked-projects').then((r) => r.data as Project[]),
-  })
-
-  const addProjectMutation = useMutation({
-    mutationFn: (p: Project) =>
-      api.post('/integrations/tracked-projects', {
-        customer_uuid: p.customer_uuid,
-        customer_name: p.customer_name,
-        customer_type: p.customer_type,
-        responsible_manager: p.responsible_manager,
-      }),
-    onSuccess: () => { refetchTracked(); refreshProjectStore() },
-  })
-
-  const removeProjectMutation = useMutation({
-    mutationFn: (uuid: string) => api.delete(`/integrations/tracked-projects/${uuid}`),
-    onSuccess: () => { refetchTracked(); refreshProjectStore() },
-  })
-
-  const handleLoadProjects = async () => {
-    setLoadingProjects(true)
-    setLoadError(null)
-    try {
-      const res = await api.get('/integrations/projects/available')
-      setAvailableProjects(res.data.data || [])
-    } catch (e: any) {
-      setLoadError(e.response?.data?.detail || 'Ошибка при загрузке проектов')
-    } finally {
-      setLoadingProjects(false)
-    }
-  }
-
-  const isTracked = (uuid: string) => trackedProjects.some((p) => p.customer_uuid === uuid)
 
   const handleSaveDb = (e: React.FormEvent) => {
     e.preventDefault()
@@ -285,107 +240,13 @@ export default function IntegrationsPage() {
           </div>
         </form>
 
-        {/* Project Management */}
-        <div className="card p-6">
-          <h2 className="font-semibold text-slate-900 mb-1">Управление проектами</h2>
-          <p className="text-sm text-slate-500 mb-5">
-            Загрузите список проектов из Naumen и добавьте нужные в систему WFM
+        <div className="card p-4 bg-blue-50 border-blue-200">
+          <p className="text-sm text-blue-800">
+            Управление проектами перенесено в раздел{' '}
+            <a href="/settings/projects" className="font-semibold underline hover:text-blue-600">
+              Настройки → Проекты
+            </a>
           </p>
-
-          {/* Tracked (added) projects */}
-          {trackedProjects.length > 0 && (
-            <div className="mb-6">
-              <h3 className="text-sm font-medium text-slate-700 mb-3">
-                Добавленные проекты ({trackedProjects.length})
-              </h3>
-              <div className="space-y-2">
-                {trackedProjects.map((p) => (
-                  <div key={p.customer_uuid}
-                    className="flex items-center justify-between bg-brand-50 border border-brand-200 rounded-lg px-4 py-2.5">
-                    <div>
-                      <p className="text-sm font-medium text-slate-800">{p.customer_name}</p>
-                      {p.responsible_manager && (
-                        <p className="text-xs text-slate-400 mt-0.5">{p.responsible_manager}</p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => removeProjectMutation.mutate(p.customer_uuid)}
-                      disabled={removeProjectMutation.isPending}
-                      className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
-                      title="Удалить из системы"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Load button */}
-          <button
-            type="button"
-            onClick={handleLoadProjects}
-            disabled={loadingProjects}
-            className="btn-secondary"
-          >
-            {loadingProjects ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-            {loadingProjects ? 'Загружаем...' : 'Загрузить проекты'}
-          </button>
-
-          {loadError && (
-            <div className="flex items-center gap-3 p-4 rounded-xl border bg-red-50 border-red-200 mt-4">
-              <XCircle size={18} className="text-red-600 flex-shrink-0" />
-              <p className="text-sm font-medium text-red-800">{loadError}</p>
-            </div>
-          )}
-
-          {/* Available projects list */}
-          {availableProjects.length > 0 && (
-            <div className="mt-5">
-              <h3 className="text-sm font-medium text-slate-700 mb-3">
-                Доступные проекты ({availableProjects.length})
-              </h3>
-              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                {availableProjects.map((p) => {
-                  const tracked = isTracked(p.customer_uuid)
-                  return (
-                    <div
-                      key={p.customer_uuid}
-                      className={`flex items-center justify-between rounded-lg px-4 py-2.5 border ${
-                        tracked
-                          ? 'bg-slate-50 border-slate-200 opacity-60'
-                          : 'bg-white border-slate-200 hover:border-brand-300 hover:bg-brand-50 transition-colors'
-                      }`}
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-800 truncate">{p.customer_name}</p>
-                        <p className="text-xs text-slate-400 mt-0.5 truncate">
-                          {p.customer_type}
-                          {p.responsible_manager ? ` · ${p.responsible_manager}` : ''}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => !tracked && addProjectMutation.mutate(p)}
-                        disabled={tracked || addProjectMutation.isPending}
-                        className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors flex-shrink-0 ml-3 ${
-                          tracked
-                            ? 'text-green-600 bg-green-50 cursor-default'
-                            : 'text-brand-600 bg-brand-50 hover:bg-brand-100 border border-brand-200'
-                        }`}
-                      >
-                        {tracked ? (
-                          <><CheckCircle2 size={13} /> Добавлен</>
-                        ) : (
-                          <><Plus size={13} /> Добавить</>
-                        )}
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
         </div>
 
       </div>

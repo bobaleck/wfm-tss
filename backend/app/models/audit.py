@@ -40,4 +40,6 @@ class TrackedProject(Base):
     customer_name = Column(String(200), nullable=False)
     customer_type = Column(String(100))
     responsible_manager = Column(String(200))
+    target_sl = Column(Integer, nullable=True)          # целевой SL% для проекта
+    is_manual = Column(Integer, default=0)              # 1 = добавлен вручную (не из Naumen)
     added_at = Column(DateTime, server_default=func.now())

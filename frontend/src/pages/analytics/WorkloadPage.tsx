@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useProjectStore } from '@/store/project'
 import api from '@/api/client'
@@ -7,7 +7,7 @@ import PageHeader from '@/components/common/PageHeader'
 import StatCard from '@/components/common/StatCard'
 import { PageSpinner } from '@/components/ui/Spinner'
 import EmptyState from '@/components/common/EmptyState'
-import { AlertCircle, TrendingUp } from 'lucide-react'
+import { AlertCircle, TrendingUp, Filter } from 'lucide-react'
 import { format, subDays } from 'date-fns'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -18,7 +18,9 @@ export default function WorkloadPage() {
   const { activeProject } = useProjectStore()
   const [begin, setBegin] = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'))
   const [end, setEnd] = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [interval, setInterval] = useState<'hour' | 'day'>('day')
+  const [interval, setIntervalValue] = useState<'hour' | 'day'>('day')
+  const [selectedQueues, setSelectedQueues] = useState<Set<string>>(new Set())
+  const [showQueueFilter, setShowQueueFilter] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['workload', activeProject?.customer_uuid, begin, end, interval],
@@ -28,6 +30,30 @@ export default function WorkloadPage() {
       }).then((r) => r.data.data as WorkloadRow[]),
     enabled: !!activeProject,
   })
+
+  const allQueues = useMemo(() => {
+    const names = new Set<string>()
+    for (const row of data || []) if (row.queue_name) names.add(row.queue_name)
+    return [...names].sort()
+  }, [data])
+
+  const filteredData = useMemo(() => {
+    if (!data) return []
+    if (selectedQueues.size === 0) return data
+    return data.filter((r) => selectedQueues.has(r.queue_name))
+  }, [data, selectedQueues])
+
+  const toggleQueue = (name: string) => {
+    setSelectedQueues((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const selectAll = () => setSelectedQueues(new Set())
+  const isAllSelected = selectedQueues.size === 0
 
   if (!activeProject) return (
     <div>
@@ -39,9 +65,9 @@ export default function WorkloadPage() {
     </div>
   )
 
-  // Aggregate by period (sum all queues)
+  // Aggregate by period (sum selected queues)
   const byPeriod: Record<string, { period: string; handled: number; lost: number; total: number; slSum: number; slCount: number; ahtSum: number; ahtCount: number }> = {}
-  for (const row of data || []) {
+  for (const row of filteredData) {
     const period = interval === 'hour'
       ? row.period_start?.slice(0, 13).replace('T', ' ')
       : row.period_start?.slice(0, 10)
@@ -61,12 +87,12 @@ export default function WorkloadPage() {
     lostPct: r.total > 0 ? Math.round((r.lost / r.total) * 100) : 0,
   }))
 
-  const totalCalls = (data || []).reduce((s, r) => s + (r.total || 0), 0)
-  const totalHandled = (data || []).reduce((s, r) => s + (r.handled || 0), 0)
-  const totalLost = (data || []).reduce((s, r) => s + (r.lost || 0), 0)
-  const slRows = (data || []).filter((r) => r.sl_percent != null)
+  const totalCalls = filteredData.reduce((s, r) => s + (r.total || 0), 0)
+  const totalHandled = filteredData.reduce((s, r) => s + (r.handled || 0), 0)
+  const totalLost = filteredData.reduce((s, r) => s + (r.lost || 0), 0)
+  const slRows = filteredData.filter((r) => r.sl_percent != null)
   const avgSL = slRows.length ? Math.round(slRows.reduce((s, r) => s + (r.sl_percent || 0), 0) / slRows.length) : null
-  const ahtRows = (data || []).filter((r) => r.avg_talk_sec != null)
+  const ahtRows = filteredData.filter((r) => r.avg_talk_sec != null)
   const avgAHT = ahtRows.length ? Math.round(ahtRows.reduce((s, r) => s + (r.avg_talk_sec || 0), 0) / ahtRows.length) : null
 
   return (
@@ -74,16 +100,68 @@ export default function WorkloadPage() {
       <PageHeader title="Нагрузка" subtitle={`Проект: ${activeProject.customer_name}`} />
 
       {/* Filters */}
-      <div className="card p-4 mb-6 flex flex-wrap items-end gap-4">
-        <div><label className="label">С</label><input type="date" className="input w-40" value={begin} onChange={(e) => setBegin(e.target.value)} /></div>
-        <div><label className="label">По</label><input type="date" className="input w-40" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
-        <div>
-          <label className="label">Интервал</label>
-          <select className="input w-32" value={interval} onChange={(e) => setInterval(e.target.value as any)}>
-            <option value="day">По дням</option>
-            <option value="hour">По часам</option>
-          </select>
+      <div className="card p-4 mb-6">
+        <div className="flex flex-wrap items-end gap-4">
+          <div><label className="label">С</label><input type="date" className="input w-40" value={begin} onChange={(e) => setBegin(e.target.value)} /></div>
+          <div><label className="label">По</label><input type="date" className="input w-40" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
+          <div>
+            <label className="label">Интервал</label>
+            <select className="input w-32" value={interval} onChange={(e) => setIntervalValue(e.target.value as any)}>
+              <option value="day">По дням</option>
+              <option value="hour">По часам</option>
+            </select>
+          </div>
+          {allQueues.length > 1 && (
+            <div className="relative">
+              <label className="label">Очереди</label>
+              <button
+                type="button"
+                onClick={() => setShowQueueFilter(!showQueueFilter)}
+                className={`btn-secondary relative ${selectedQueues.size > 0 ? 'border-brand-400 text-brand-700 bg-brand-50' : ''}`}
+              >
+                <Filter size={15} />
+                {selectedQueues.size === 0 ? 'Все очереди' : `Выбрано: ${selectedQueues.size} из ${allQueues.length}`}
+              </button>
+              {showQueueFilter && (
+                <div className="absolute z-20 top-full mt-1 left-0 bg-white border border-slate-200 rounded-xl shadow-lg p-3 min-w-64">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Фильтр по очередям</span>
+                    <button onClick={selectAll} className="text-xs text-brand-600 hover:underline">Сбросить</button>
+                  </div>
+                  <div className="space-y-1 max-h-60 overflow-y-auto">
+                    {allQueues.map((q) => (
+                      <label key={q} className="flex items-center gap-2 cursor-pointer px-2 py-1 rounded-lg hover:bg-slate-50">
+                        <input
+                          type="checkbox"
+                          className="rounded"
+                          checked={isAllSelected ? false : selectedQueues.has(q)}
+                          onChange={() => toggleQueue(q)}
+                        />
+                        <span className="text-sm text-slate-700 truncate">{q}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => setShowQueueFilter(false)}
+                    className="mt-2 w-full text-xs text-center py-1.5 bg-brand-500 text-white rounded-lg hover:bg-brand-600"
+                  >
+                    Применить
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+        {selectedQueues.size > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {[...selectedQueues].map((q) => (
+              <span key={q} className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2 py-0.5 rounded-full">
+                {q}
+                <button onClick={() => toggleQueue(q)} className="hover:text-brand-900 font-bold">×</button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Stats */}
@@ -97,7 +175,11 @@ export default function WorkloadPage() {
       {/* Chart */}
       <div className="card p-6 mb-6">
         <h2 className="text-sm font-semibold text-slate-800 mb-1">Нагрузка по периодам</h2>
-        <p className="text-xs text-slate-400 mb-4">Суммарно по всем очередям проекта</p>
+        <p className="text-xs text-slate-400 mb-4">
+          {selectedQueues.size === 0
+            ? 'Суммарно по всем очередям проекта'
+            : `Очереди: ${[...selectedQueues].join(', ')}`}
+        </p>
         {isLoading ? <PageSpinner /> : chartData.length > 0 ? (
           <ResponsiveContainer width="100%" height={280}>
             <ComposedChart data={chartData}>
@@ -120,6 +202,60 @@ export default function WorkloadPage() {
           </ResponsiveContainer>
         ) : <EmptyState title="Нет данных" />}
       </div>
+
+      {/* Per-queue breakdown (when specific queues selected) */}
+      {selectedQueues.size > 0 && !isLoading && (
+        <div className="card overflow-hidden mb-6">
+          <div className="px-4 py-3 border-b border-slate-100">
+            <h2 className="text-sm font-semibold text-slate-800">Сравнение выбранных очередей</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  {['Очередь', 'Всего звонков', 'Обработано', 'Потеряно', '% потерь', 'Ср. AHT (с)', 'Ср. SL (%)'].map((h) => (
+                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[...selectedQueues].map((qName) => {
+                  const qRows = filteredData.filter((r) => r.queue_name === qName)
+                  const total = qRows.reduce((s, r) => s + (r.total || 0), 0)
+                  const handled = qRows.reduce((s, r) => s + (r.handled || 0), 0)
+                  const lost = qRows.reduce((s, r) => s + (r.lost || 0), 0)
+                  const slR = qRows.filter((r) => r.sl_percent != null)
+                  const sl = slR.length ? Math.round(slR.reduce((s, r) => s + (r.sl_percent || 0), 0) / slR.length) : null
+                  const ahtR = qRows.filter((r) => r.avg_talk_sec != null)
+                  const aht = ahtR.length ? Math.round(ahtR.reduce((s, r) => s + (r.avg_talk_sec || 0), 0) / ahtR.length) : null
+                  const lostPct = total > 0 ? Math.round(lost / total * 100) : 0
+                  return (
+                    <tr key={qName} className="border-b border-slate-50 hover:bg-slate-50">
+                      <td className="px-4 py-2.5 font-medium text-slate-800">{qName}</td>
+                      <td className="px-4 py-2.5 font-semibold">{total.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-green-700">{handled.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-red-600">{lost.toLocaleString()}</td>
+                      <td className="px-4 py-2.5">
+                        <span className={`text-xs font-medium ${lostPct <= 5 ? 'text-green-600' : lostPct <= 15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                          {lostPct}%
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-600">{aht ?? '—'}</td>
+                      <td className="px-4 py-2.5">
+                        {sl != null ? (
+                          <span className={`font-medium ${sl >= 80 ? 'text-green-600' : sl >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
+                            {sl}%
+                          </span>
+                        ) : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Period summary table */}
       <div className="card overflow-hidden">

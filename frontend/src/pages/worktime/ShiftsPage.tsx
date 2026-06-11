@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, Clock4, Save, CheckCircle, AlertTriangle, Download, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
+import { Plus, Pencil, Trash2, Clock4, Save, CheckCircle, AlertTriangle, Download, RefreshCw, ChevronRight, ChevronDown, Activity } from 'lucide-react'
 import api from '@/api/client'
-import type { Shift, OperatorSession } from '@/types'
+import type { Shift, OperatorSession, TimelineEvent } from '@/types'
 import { SHIFT_STATUSES } from '@/types'
 import { useProjectStore } from '@/store/project'
 import PageHeader from '@/components/common/PageHeader'
@@ -13,7 +13,102 @@ import EmptyState from '@/components/common/EmptyState'
 import { format, subDays, addDays } from 'date-fns'
 
 type ShiftSortKey = 'employee_name' | 'shift_date' | 'start_time' | 'end_time' | 'schedule_name' | 'status' | 'actual_hours_worked'
-type SessionSortKey = 'employee_name' | 'login' | 'first_login' | 'last_logout' | 'normal_sec' | 'non_normal_sec' | 'break_count'
+type SessionSortKey = 'employee_name' | 'first_login' | 'last_logout' | 'normal_sec' | 'non_normal_sec' | 'shift_sec' | 'break_count'
+
+// ─── Цвета статусов для временной линии ─────────────────────────────────────
+const STATUS_COLORS: Record<string, { bg: string; text: string; label: string }> = {
+  normal:    { bg: '#22c55e', text: '#fff', label: 'В линии' },
+  available: { bg: '#4ade80', text: '#fff', label: 'Доступен' },
+  offline:   { bg: '#94a3b8', text: '#fff', label: 'Не в сети' },
+  not_ready: { bg: '#f97316', text: '#fff', label: 'Не готов' },
+  lunch:     { bg: '#f59e0b', text: '#fff', label: 'Обед' },
+  break:     { bg: '#fbbf24', text: '#fff', label: 'Перерыв' },
+  training:  { bg: '#a78bfa', text: '#fff', label: 'Обучение' },
+  meeting:   { bg: '#60a5fa', text: '#fff', label: 'Совещание' },
+}
+function statusColor(status: string) {
+  return STATUS_COLORS[status] ?? { bg: '#cbd5e1', text: '#334155', label: status }
+}
+
+// ─── Временная линия статусов ────────────────────────────────────────────────
+function StatusTimeline({ login, workDate, dbOverrides }: { login: string; workDate: string; dbOverrides?: any }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['timeline', login, workDate],
+    queryFn: () =>
+      api.get('/analytics/operator-timeline', { params: { login, work_date: workDate } })
+         .then((r) => r.data.data as TimelineEvent[]),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  if (isLoading) return <div className="px-4 py-3 text-xs text-slate-400 animate-pulse">Загрузка временной линии…</div>
+  if (!data?.length) return <div className="px-4 py-3 text-xs text-slate-400">Нет данных о статусах</div>
+
+  // Определяем диапазон дня для отрисовки
+  const firstEntered = new Date(data[0].entered)
+  const lastEntered = new Date(data[data.length - 1].entered)
+  const dayStart = new Date(firstEntered)
+  dayStart.setHours(firstEntered.getHours(), 0, 0, 0)
+  const dayEnd = new Date(lastEntered)
+  dayEnd.setHours(Math.min(lastEntered.getHours() + 2, 23), 59, 59, 999)
+  const totalMs = dayEnd.getTime() - dayStart.getTime()
+
+  const legendStatuses = Array.from(new Set(data.map((e) => e.status)))
+
+  return (
+    <div className="px-4 py-3 bg-white border-t border-slate-100">
+      {/* Временная линия */}
+      <div className="relative h-9 rounded-md overflow-hidden flex mb-2" style={{ background: '#f1f5f9' }}>
+        {data.map((evt, i) => {
+          const start = (new Date(evt.entered).getTime() - dayStart.getTime()) / totalMs * 100
+          const dur = Math.max(0.3, (evt.duration_sec * 1000) / totalMs * 100)
+          const { bg, label } = statusColor(evt.status)
+          return (
+            <div
+              key={i}
+              title={`${label}: ${evt.entered.slice(11, 16)} (${Math.round(evt.duration_sec / 60)} мин)`}
+              style={{
+                position: 'absolute',
+                left: `${start}%`,
+                width: `${dur}%`,
+                backgroundColor: bg,
+                top: 0,
+                bottom: 0,
+                borderRight: '1px solid rgba(255,255,255,0.3)',
+              }}
+            />
+          )
+        })}
+      </div>
+
+      {/* Метки времени */}
+      <div className="relative h-4 mb-2 text-xs text-slate-400 select-none">
+        {data.filter((_, i) => i % Math.max(1, Math.floor(data.length / 8)) === 0).map((evt, i) => {
+          const left = (new Date(evt.entered).getTime() - dayStart.getTime()) / totalMs * 100
+          return (
+            <span key={i} style={{ position: 'absolute', left: `${left}%`, transform: 'translateX(-50%)' }}>
+              {evt.entered.slice(11, 16)}
+            </span>
+          )
+        })}
+      </div>
+
+      {/* Легенда */}
+      <div className="flex flex-wrap gap-3">
+        {legendStatuses.map((s) => {
+          const { bg, label } = statusColor(s)
+          const totalSec = data.filter((e) => e.status === s).reduce((acc, e) => acc + e.duration_sec, 0)
+          return (
+            <div key={s} className="flex items-center gap-1.5 text-xs text-slate-600">
+              <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: bg }} />
+              <span>{label}</span>
+              <span className="text-slate-400">{Math.round(totalSec / 60)} мин</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 function SortTh({ label, sortKey, current, dir, onSort, className = '' }: {
   label: string; sortKey: string; current: string; dir: 'asc' | 'desc'
@@ -243,6 +338,8 @@ export default function ShiftsPage() {
   const [shiftSortDir, setShiftSortDir] = useState<'asc' | 'desc'>('asc')
   const [sessSortKey, setSessSortKey] = useState<SessionSortKey>('first_login')
   const [sessSortDir, setSessSortDir] = useState<'asc' | 'desc'>('asc')
+  // Раскрытые строки операторов (для временной линии)
+  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set())
 
   const handleShiftSort = (key: ShiftSortKey) => {
     if (shiftSortKey === key) setShiftSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -252,6 +349,13 @@ export default function ShiftsPage() {
     if (sessSortKey === key) setSessSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     else { setSessSortKey(key); setSessSortDir('asc') }
   }
+  const toggleSession = useCallback((key: string) => {
+    setExpandedSessions((prev) => {
+      const n = new Set(prev)
+      n.has(key) ? n.delete(key) : n.add(key)
+      return n
+    })
+  }, [])
 
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set())
   const toggleDate = (date: string) =>
@@ -453,6 +557,12 @@ export default function ShiftsPage() {
                 const isOpen = expandedDates.has(date)
                 const firstLogins = rows.filter((r) => r.first_login).map((r) => r.first_login!.slice(11, 16)).sort()
                 const lastLogouts = rows.filter((r) => r.last_logout).map((r) => r.last_logout!.slice(11, 16)).sort()
+                const sortedRows = [...rows].sort((a, b) => {
+                  const av = (a as any)[sessSortKey] ?? ''
+                  const bv = (b as any)[sessSortKey] ?? ''
+                  const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv))
+                  return sessSortDir === 'asc' ? cmp : -cmp
+                })
                 return (
                   <div key={date}>
                     <button
@@ -475,34 +585,67 @@ export default function ShiftsPage() {
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b border-slate-200">
+                              <th className="w-8 px-2 py-2" />
                               <SortTh label="ФИО" sortKey="employee_name" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
-                              <SortTh label="Логин" sortKey="login" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
                               <SortTh label="Первый вход" sortKey="first_login" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
                               <SortTh label="Последний выход" sortKey="last_logout" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
+                              <SortTh label="В смене (мин)" sortKey="shift_sec" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
                               <SortTh label="В линии (мин)" sortKey="normal_sec" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
                               <SortTh label="Паузы (мин)" sortKey="non_normal_sec" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
                               <SortTh label="Пауз" sortKey="break_count" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
-                              <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">Статусы</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {[...rows].sort((a, b) => {
-                              const av = (a as any)[sessSortKey] ?? ''
-                              const bv = (b as any)[sessSortKey] ?? ''
-                              const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv))
-                              return sessSortDir === 'asc' ? cmp : -cmp
-                            }).map((s, i) => (
-                              <tr key={i} className="border-b border-slate-100 hover:bg-white">
-                                <td className="px-4 py-2 font-medium text-slate-900">{s.employee_name || s.login}</td>
-                                <td className="px-4 py-2 text-slate-400 font-mono text-xs">{s.login}</td>
-                                <td className="px-4 py-2 text-green-700 font-medium">{s.first_login?.slice(11, 16) || '—'}</td>
-                                <td className="px-4 py-2 text-red-600">{s.last_logout?.slice(11, 16) || '—'}</td>
-                                <td className="px-4 py-2 text-blue-700 font-medium">{s.normal_sec != null ? Math.round(s.normal_sec / 60) : '—'}</td>
-                                <td className="px-4 py-2 text-slate-600">{s.non_normal_sec != null ? Math.round(s.non_normal_sec / 60) : '—'}</td>
-                                <td className="px-4 py-2 text-slate-500">{s.break_count ?? '—'}</td>
-                                <td className="px-4 py-2 text-slate-400 text-xs max-w-48 truncate">{s.statuses_seen || '—'}</td>
-                              </tr>
-                            ))}
+                            {sortedRows.map((s, i) => {
+                              const sessKey = `${date}-${s.login}`
+                              const isExpanded = expandedSessions.has(sessKey)
+                              const shiftMin = s.shift_sec != null ? Math.round(s.shift_sec / 60) : null
+                              const onlineMin = s.normal_sec != null ? Math.round(s.normal_sec / 60) : null
+                              const pauseMin = s.non_normal_sec != null ? Math.round(s.non_normal_sec / 60) : null
+                              const busyPct = shiftMin && shiftMin > 0 && onlineMin != null
+                                ? Math.min(100, Math.round((onlineMin / shiftMin) * 100))
+                                : null
+                              return (
+                                <>
+                                  <tr
+                                    key={i}
+                                    onClick={() => toggleSession(sessKey)}
+                                    className="border-b border-slate-100 hover:bg-white cursor-pointer select-none"
+                                  >
+                                    <td className="px-2 py-2 text-center text-slate-400">
+                                      {isExpanded
+                                        ? <ChevronDown size={13} />
+                                        : <Activity size={13} className="opacity-40" />}
+                                    </td>
+                                    <td className="px-4 py-2 font-medium text-slate-900">{s.employee_name || s.login}</td>
+                                    <td className="px-4 py-2 text-green-700 font-medium">{s.first_login?.slice(11, 16) || '—'}</td>
+                                    <td className="px-4 py-2 text-red-600">{s.last_logout?.slice(11, 16) || '—'}</td>
+                                    <td className="px-4 py-2">
+                                      {shiftMin != null ? (
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-semibold text-slate-800">{shiftMin}</span>
+                                          {busyPct != null && (
+                                            <div className="w-14 h-1.5 bg-slate-200 rounded-full overflow-hidden flex-shrink-0">
+                                              <div className="h-full rounded-full bg-brand-400" style={{ width: `${busyPct}%` }} />
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : '—'}
+                                    </td>
+                                    <td className="px-4 py-2 text-blue-700 font-medium">{onlineMin ?? '—'}</td>
+                                    <td className="px-4 py-2 text-amber-600">{pauseMin ?? '—'}</td>
+                                    <td className="px-4 py-2 text-slate-500">{s.break_count ?? '—'}</td>
+                                  </tr>
+                                  {isExpanded && (
+                                    <tr key={`${i}-tl`} className="border-b border-slate-100">
+                                      <td colSpan={8} className="p-0">
+                                        <StatusTimeline login={s.login} workDate={date} />
+                                      </td>
+                                    </tr>
+                                  )}
+                                </>
+                              )
+                            })}
                           </tbody>
                         </table>
                       </div>

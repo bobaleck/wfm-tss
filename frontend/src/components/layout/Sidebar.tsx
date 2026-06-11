@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, UsersRound, Star, BarChart3, TrendingUp,
   UserCheck, Calendar, CalendarOff, Clock4, FileBarChart2, Settings2,
   UserCog, ScrollText, Plug, Info, BookOpen, ChevronDown, ChevronRight,
-  PhoneCall, Clock, UsersIcon,
+  PhoneCall, Clock, UsersIcon, Radio, FolderOpen,
 } from 'lucide-react'
 
 interface NavItem {
@@ -35,6 +35,7 @@ const nav: NavItem[] = [
       { label: 'Нагр. операторов',  icon: <UserCheck size={16} />,    to: '/analytics/operator-load' },
       { label: 'Внутридневная',     icon: <Clock size={16} />,         to: '/analytics/intraday' },
       { label: 'Потребность',       icon: <UsersIcon size={16} />,     to: '/analytics/staffing' },
+      { label: 'Онлайн',            icon: <Radio size={16} />,         to: '/analytics/live' },
     ],
   },
   {
@@ -50,7 +51,14 @@ const nav: NavItem[] = [
 
 const bottom: NavItem[] = [
   { label: 'Отчёты',        icon: <FileBarChart2 size={18} />, to: '/reports' },
-  { label: 'Настройки',     icon: <Settings2 size={18} />,    to: '/settings' },
+  {
+    label: 'Настройки',
+    icon: <Settings2 size={18} />,
+    children: [
+      { label: 'Общие',    icon: <Settings2 size={16} />,    to: '/settings' },
+      { label: 'Проекты',  icon: <FolderOpen size={16} />,   to: '/settings/projects' },
+    ],
+  },
   { label: 'Пользователи',  icon: <UserCog size={18} />,      to: '/users' },
   { label: 'Журнал',        icon: <ScrollText size={18} />,   to: '/journal' },
   { label: 'Интеграции',    icon: <Plug size={18} />,         to: '/integrations' },

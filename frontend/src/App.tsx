@@ -24,6 +24,8 @@ import JournalPage from '@/pages/JournalPage'
 import IntegrationsPage from '@/pages/IntegrationsPage'
 import AboutPage from '@/pages/AboutPage'
 import DocsPage from '@/pages/DocsPage'
+import LivePage from '@/pages/analytics/LivePage'
+import ProjectSettingsPage from '@/pages/settings/ProjectSettingsPage'
 
 // Guards both token presence and user identity.
 // - No token              → /login immediately
@@ -94,11 +96,13 @@ export default function App() {
                   <Route path="/analytics/operator-load" element={<OperatorLoadPage />} />
                   <Route path="/analytics/intraday" element={<IntradayPage />} />
                   <Route path="/analytics/staffing" element={<StaffingPage />} />
+                  <Route path="/analytics/live" element={<LivePage />} />
                   <Route path="/worktime/schedules" element={<SchedulesPage />} />
                   <Route path="/worktime/absences" element={<AbsencesPage />} />
                   <Route path="/worktime/shifts" element={<ShiftsPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/settings/projects" element={<ProjectSettingsPage />} />
                   <Route path="/users" element={<UsersPage />} />
                   <Route path="/journal" element={<JournalPage />} />
                   <Route path="/integrations" element={<IntegrationsPage />} />

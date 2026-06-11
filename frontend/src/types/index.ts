@@ -18,6 +18,8 @@ export interface Project {
   active_incoming_count: number
   active_outcoming_count: number
   responsible_manager?: string
+  target_sl?: number | null
+  is_manual?: boolean
 }
 
 export type EmploymentStatus = 'new' | 'active' | 'fired'
@@ -157,8 +159,16 @@ export interface OperatorSession {
   total_sec: number | null
   normal_sec: number | null
   non_normal_sec: number | null
+  shift_sec: number | null
   break_count: number | null
   statuses_seen: string | null
+}
+
+export interface TimelineEvent {
+  login: string
+  status: string
+  entered: string
+  duration_sec: number
 }
 
 export interface OperatorLoadRow {

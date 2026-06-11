@@ -42,6 +42,8 @@ class TrackedProjectIn(BaseModel):
     customer_name: str
     customer_type: Optional[str] = None
     responsible_manager: Optional[str] = None
+    target_sl: Optional[int] = None
+    is_manual: Optional[bool] = False
 
 
 def _build_overrides(db: Session) -> Optional[dict]:
@@ -139,6 +141,8 @@ def list_tracked_projects(db: Session = Depends(get_db), _=Depends(get_current_u
             "customer_name": p.customer_name,
             "customer_type": p.customer_type or "",
             "responsible_manager": p.responsible_manager,
+            "target_sl": p.target_sl,
+            "is_manual": bool(p.is_manual),
             "active_projects_count": 0,
             "active_incoming_count": 0,
             "active_outcoming_count": 0,
@@ -147,19 +151,39 @@ def list_tracked_projects(db: Session = Depends(get_db), _=Depends(get_current_u
     ]
 
 
+@router.put("/tracked-projects/{uuid}")
+def update_tracked_project(uuid: str, body: TrackedProjectIn, db: Session = Depends(get_db), _=Depends(require_admin)):
+    project = db.query(TrackedProject).filter(TrackedProject.customer_uuid == uuid).first()
+    if not project:
+        raise HTTPException(404, detail="Не найден")
+    if body.customer_name:
+        project.customer_name = body.customer_name
+    if body.customer_type is not None:
+        project.customer_type = body.customer_type
+    if body.responsible_manager is not None:
+        project.responsible_manager = body.responsible_manager
+    if body.target_sl is not None:
+        project.target_sl = body.target_sl
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/tracked-projects", status_code=201)
 def add_tracked_project(body: TrackedProjectIn, db: Session = Depends(get_db), _=Depends(require_admin)):
     if db.query(TrackedProject).filter(TrackedProject.customer_uuid == body.customer_uuid).first():
         raise HTTPException(409, detail="Проект уже добавлен")
+    import uuid as _uuid
     project = TrackedProject(
-        customer_uuid=body.customer_uuid,
+        customer_uuid=body.customer_uuid or str(_uuid.uuid4()),
         customer_name=body.customer_name,
         customer_type=body.customer_type,
         responsible_manager=body.responsible_manager,
+        target_sl=body.target_sl,
+        is_manual=1 if body.is_manual else 0,
     )
     db.add(project)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "customer_uuid": project.customer_uuid}
 
 
 @router.delete("/tracked-projects/{uuid}", status_code=204)
