@@ -5,7 +5,7 @@ from datetime import date
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.models.audit import IntegrationSettings
+from app.models.audit import IntegrationSettings, QueueSetting
 from app.models.employee import Employee
 import app.services.naumen_db as naumen
 
@@ -36,7 +36,20 @@ def get_projects(db: Session = Depends(get_db), _=Depends(get_current_user)):
 @router.get("/queues")
 def get_queues(partner_uuid: str, db: Session = Depends(get_db), _=Depends(get_current_user)):
     try:
-        return {"data": naumen.get_queues(partner_uuid, _build_overrides(db))}
+        queues = naumen.get_queues(partner_uuid, _build_overrides(db))
+        # Apply WFM overrides (target_sl, answer_sec) on top of Naumen values
+        overrides = {
+            r.queue_name: r
+            for r in db.query(QueueSetting).filter(QueueSetting.partner_uuid == partner_uuid).all()
+        }
+        for q in queues:
+            ov = overrides.get(q.get("name"))
+            if ov:
+                if ov.target_sl is not None:
+                    q["target_sl"] = ov.target_sl
+                if ov.answer_sec is not None:
+                    q["answer_sec"] = ov.answer_sec
+        return {"data": queues}
     except Exception as e:
         raise HTTPException(503, detail=str(e))
 

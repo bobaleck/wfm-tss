@@ -2,12 +2,13 @@ import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useProjectStore } from '@/store/project'
 import api from '@/api/client'
-import type { WorkloadRow } from '@/types'
+import type { WorkloadRow, Queue } from '@/types'
 import PageHeader from '@/components/common/PageHeader'
 import StatCard from '@/components/common/StatCard'
 import { PageSpinner } from '@/components/ui/Spinner'
 import EmptyState from '@/components/common/EmptyState'
-import { AlertCircle, TrendingUp, Filter } from 'lucide-react'
+import QueueFilterDropdown from '@/components/common/QueueFilterDropdown'
+import { AlertCircle, TrendingUp } from 'lucide-react'
 import { format, subDays } from 'date-fns'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -20,7 +21,6 @@ export default function WorkloadPage() {
   const [end, setEnd] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [interval, setIntervalValue] = useState<'hour' | 'day'>('day')
   const [selectedQueues, setSelectedQueues] = useState<Set<string>>(new Set())
-  const [showQueueFilter, setShowQueueFilter] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['workload', activeProject?.customer_uuid, begin, end, interval],
@@ -31,29 +31,28 @@ export default function WorkloadPage() {
     enabled: !!activeProject,
   })
 
+  // Fetch all queues for the dropdown (not just those with data in range)
+  const { data: queuesData } = useQuery({
+    queryKey: ['queues', activeProject?.customer_uuid],
+    queryFn: () =>
+      api.get('/analytics/queues', { params: { partner_uuid: activeProject!.customer_uuid } })
+        .then((r) => r.data.data as Queue[]),
+    enabled: !!activeProject,
+  })
+
   const allQueues = useMemo(() => {
-    const names = new Set<string>()
-    for (const row of data || []) if (row.queue_name) names.add(row.queue_name)
-    return [...names].sort()
-  }, [data])
+    const fromQueues = (queuesData || []).map((q) => q.name).filter(Boolean)
+    if (fromQueues.length) return fromQueues.sort()
+    const fromData = new Set<string>()
+    for (const row of data || []) if (row.queue_name) fromData.add(row.queue_name)
+    return [...fromData].sort()
+  }, [queuesData, data])
 
   const filteredData = useMemo(() => {
     if (!data) return []
     if (selectedQueues.size === 0) return data
     return data.filter((r) => selectedQueues.has(r.queue_name))
   }, [data, selectedQueues])
-
-  const toggleQueue = (name: string) => {
-    setSelectedQueues((prev) => {
-      const next = new Set(prev)
-      if (next.has(name)) next.delete(name)
-      else next.add(name)
-      return next
-    })
-  }
-
-  const selectAll = () => setSelectedQueues(new Set())
-  const isAllSelected = selectedQueues.size === 0
 
   if (!activeProject) return (
     <div>
@@ -100,67 +99,18 @@ export default function WorkloadPage() {
       <PageHeader title="Нагрузка" subtitle={`Проект: ${activeProject.customer_name}`} />
 
       {/* Filters */}
-      <div className="card p-4 mb-6">
-        <div className="flex flex-wrap items-end gap-4">
-          <div><label className="label">С</label><input type="date" className="input w-40" value={begin} onChange={(e) => setBegin(e.target.value)} /></div>
-          <div><label className="label">По</label><input type="date" className="input w-40" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
-          <div>
-            <label className="label">Интервал</label>
-            <select className="input w-32" value={interval} onChange={(e) => setIntervalValue(e.target.value as any)}>
-              <option value="day">По дням</option>
-              <option value="hour">По часам</option>
-            </select>
-          </div>
-          {allQueues.length > 1 && (
-            <div className="relative">
-              <label className="label">Очереди</label>
-              <button
-                type="button"
-                onClick={() => setShowQueueFilter(!showQueueFilter)}
-                className={`btn-secondary relative ${selectedQueues.size > 0 ? 'border-brand-400 text-brand-700 bg-brand-50' : ''}`}
-              >
-                <Filter size={15} />
-                {selectedQueues.size === 0 ? 'Все очереди' : `Выбрано: ${selectedQueues.size} из ${allQueues.length}`}
-              </button>
-              {showQueueFilter && (
-                <div className="absolute z-20 top-full mt-1 left-0 bg-white border border-slate-200 rounded-xl shadow-lg p-3 min-w-64">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Фильтр по очередям</span>
-                    <button onClick={selectAll} className="text-xs text-brand-600 hover:underline">Сбросить</button>
-                  </div>
-                  <div className="space-y-1 max-h-60 overflow-y-auto">
-                    {allQueues.map((q) => (
-                      <label key={q} className="flex items-center gap-2 cursor-pointer px-2 py-1 rounded-lg hover:bg-slate-50">
-                        <input
-                          type="checkbox"
-                          className="rounded"
-                          checked={isAllSelected ? false : selectedQueues.has(q)}
-                          onChange={() => toggleQueue(q)}
-                        />
-                        <span className="text-sm text-slate-700 truncate">{q}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <button
-                    onClick={() => setShowQueueFilter(false)}
-                    className="mt-2 w-full text-xs text-center py-1.5 bg-brand-500 text-white rounded-lg hover:bg-brand-600"
-                  >
-                    Применить
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+      <div className="card p-4 mb-6 flex flex-wrap items-end gap-4">
+        <div><label className="label">С</label><input type="date" className="input w-40" value={begin} onChange={(e) => setBegin(e.target.value)} /></div>
+        <div><label className="label">По</label><input type="date" className="input w-40" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
+        <div>
+          <label className="label">Интервал</label>
+          <select className="input w-32" value={interval} onChange={(e) => setIntervalValue(e.target.value as any)}>
+            <option value="day">По дням</option>
+            <option value="hour">По часам</option>
+          </select>
         </div>
-        {selectedQueues.size > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {[...selectedQueues].map((q) => (
-              <span key={q} className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2 py-0.5 rounded-full">
-                {q}
-                <button onClick={() => toggleQueue(q)} className="hover:text-brand-900 font-bold">×</button>
-              </span>
-            ))}
-          </div>
+        {allQueues.length > 1 && (
+          <QueueFilterDropdown queues={allQueues} selected={selectedQueues} onChange={setSelectedQueues} />
         )}
       </div>
 

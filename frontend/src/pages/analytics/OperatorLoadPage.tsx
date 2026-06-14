@@ -139,7 +139,7 @@ export default function OperatorLoadPage() {
     return sortDir === 'asc' ? cmp : -cmp
   })
 
-  const chartData = [...(data || [])].sort((a, b) => b.handled_calls - a.handled_calls).slice(0, 15)
+  const chartData = [...(data || [])].sort((a, b) => b.handled_calls - a.handled_calls).slice(0, 10)
     .map((r) => ({ name: truncateName(r.employee_name, r.login), login: r.login, handled: r.handled_calls }))
 
   const totalHandled = (data || []).reduce((s, r) => s + r.handled_calls, 0)
@@ -167,17 +167,17 @@ export default function OperatorLoadPage() {
         <StatCard title="Средний SL" value={avgSL !== null ? `${avgSL}%` : '—'} color="purple" />
       </div>
 
-      {/* Chart top 15 */}
+      {/* Chart top 10 */}
       {chartData.length > 0 && (
-        <div className="card p-6 mb-6">
-          <div className="flex items-center justify-between mb-5">
+        <div className="card p-5 mb-6">
+          <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-sm font-semibold text-slate-800">Топ-15 операторов по звонкам</h2>
-              <p className="text-xs text-slate-400 mt-0.5">За выбранный период · длина полосы = доля от лидера</p>
+              <h2 className="text-sm font-semibold text-slate-800">Топ-10 операторов по звонкам</h2>
+              <p className="text-xs text-slate-400 mt-0.5">За выбранный период · доля от лидера</p>
             </div>
             <div className="text-right">
               <p className="text-xs text-slate-400">Лидер</p>
-              <p className="text-xl font-bold text-amber-500">{chartData[0]?.handled}</p>
+              <p className="text-lg font-bold text-amber-500">{chartData[0]?.handled} зв.</p>
             </div>
           </div>
           <OperatorRankChart data={chartData} />

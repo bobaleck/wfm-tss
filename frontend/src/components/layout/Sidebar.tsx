@@ -66,15 +66,20 @@ const bottom: NavItem[] = [
   { label: 'Документация',  icon: <BookOpen size={18} />,     to: '/docs' },
 ]
 
+function pathMatches(pathname: string, to: string): boolean {
+  return pathname === to || pathname.startsWith(to + '/')
+}
+
 function NavSection({ item }: { item: NavItem }) {
   const location = useLocation()
-  const isChildActive = item.children?.some((c) => c.to && location.pathname.startsWith(c.to))
+  const isChildActive = item.children?.some((c) => c.to && pathMatches(location.pathname, c.to))
   const [open, setOpen] = useState(isChildActive ?? false)
 
   if (item.to) {
     return (
       <NavLink
         to={item.to}
+        end
         className={({ isActive }) =>
           clsx('sidebar-item', isActive && 'active')
         }
@@ -101,6 +106,7 @@ function NavSection({ item }: { item: NavItem }) {
             <NavLink
               key={child.to}
               to={child.to!}
+              end
               className={({ isActive }) =>
                 clsx('sidebar-item text-xs', isActive && 'active')
               }

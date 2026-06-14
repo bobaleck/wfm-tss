@@ -43,3 +43,13 @@ class TrackedProject(Base):
     target_sl = Column(Integer, nullable=True)          # целевой SL% для проекта
     is_manual = Column(Integer, default=0)              # 1 = добавлен вручную (не из Naumen)
     added_at = Column(DateTime, server_default=func.now())
+
+
+class QueueSetting(Base):
+    __tablename__ = "queue_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    partner_uuid = Column(String(100), nullable=False, index=True)
+    queue_name = Column(String(300), nullable=False)
+    target_sl = Column(Integer, nullable=True)
+    answer_sec = Column(Integer, nullable=True)

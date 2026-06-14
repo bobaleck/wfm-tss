@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, users, employees, teams, skills, analytics, schedules, integrations
+from app.api.v1 import auth, users, employees, teams, skills, analytics, schedules, integrations, queue_settings
 
 api_router = APIRouter()
 
@@ -11,3 +11,4 @@ api_router.include_router(skills.router, prefix="/skills", tags=["skills"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(schedules.router, prefix="/schedules", tags=["schedules"])
 api_router.include_router(integrations.router, prefix="/integrations", tags=["integrations"])
+api_router.include_router(queue_settings.router, prefix="/queue-settings", tags=["queue-settings"])

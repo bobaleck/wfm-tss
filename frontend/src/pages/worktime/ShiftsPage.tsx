@@ -15,23 +15,41 @@ import { format, subDays, addDays } from 'date-fns'
 type ShiftSortKey = 'employee_name' | 'shift_date' | 'start_time' | 'end_time' | 'schedule_name' | 'status' | 'actual_hours_worked'
 type SessionSortKey = 'employee_name' | 'first_login' | 'last_logout' | 'normal_sec' | 'non_normal_sec' | 'shift_sec' | 'break_count'
 
-// ─── Цвета статусов для временной линии ─────────────────────────────────────
-const STATUS_COLORS: Record<string, { bg: string; text: string; label: string }> = {
-  normal:    { bg: '#22c55e', text: '#fff', label: 'В линии' },
-  available: { bg: '#4ade80', text: '#fff', label: 'Доступен' },
-  offline:   { bg: '#94a3b8', text: '#fff', label: 'Не в сети' },
-  not_ready: { bg: '#f97316', text: '#fff', label: 'Не готов' },
-  lunch:     { bg: '#f59e0b', text: '#fff', label: 'Обед' },
-  break:     { bg: '#fbbf24', text: '#fff', label: 'Перерыв' },
-  training:  { bg: '#a78bfa', text: '#fff', label: 'Обучение' },
-  meeting:   { bg: '#60a5fa', text: '#fff', label: 'Совещание' },
+// ─── Классификация статусов в 4 группы ──────────────────────────────────────
+// "Работает" = в разговоре или ожидает звонка
+// "Простой"  = на паузе, недоступен, обед и т.п.
+// "Офлайн"   = вышел из системы
+// "Другое"   = кастомные/неизвестные статусы
+const WORK_STATUSES = new Set([
+  'normal', 'ready', 'available', 'online', 'ringing', 'ringing#voice',
+  'speaking', 'speaking#voice', 'inservice',
+])
+const PAUSE_STATUSES = new Set([
+  'break', 'lunch', 'training', 'meeting', 'not_ready', 'notavailable',
+  'away', 'wrapup', 'wrapup#voice', 'acw', 'dnd', 'busy', 'custom',
+  'custom1', 'custom2', 'custom3', 'custom4', 'custom5',
+])
+const OFFLINE_STATUSES = new Set(['offline', 'logged_out', 'signedoff'])
+
+type GroupKey = 'work' | 'pause' | 'offline' | 'other'
+
+const GROUP_CONFIG: Record<GroupKey, { bg: string; label: string }> = {
+  work:    { bg: '#22c55e', label: 'Работает' },
+  pause:   { bg: '#f59e0b', label: 'Простой' },
+  offline: { bg: '#94a3b8', label: 'Офлайн' },
+  other:   { bg: '#a78bfa', label: 'Другое' },
 }
-function statusColor(status: string) {
-  return STATUS_COLORS[status] ?? { bg: '#cbd5e1', text: '#334155', label: status }
+
+function classifyStatus(status: string): GroupKey {
+  const s = status.toLowerCase()
+  if (WORK_STATUSES.has(s)) return 'work'
+  if (PAUSE_STATUSES.has(s)) return 'pause'
+  if (OFFLINE_STATUSES.has(s)) return 'offline'
+  return 'other'
 }
 
 // ─── Временная линия статусов ────────────────────────────────────────────────
-function StatusTimeline({ login, workDate, dbOverrides }: { login: string; workDate: string; dbOverrides?: any }) {
+function StatusTimeline({ login, workDate }: { login: string; workDate: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ['timeline', login, workDate],
     queryFn: () =>
@@ -43,29 +61,34 @@ function StatusTimeline({ login, workDate, dbOverrides }: { login: string; workD
   if (isLoading) return <div className="px-4 py-3 text-xs text-slate-400 animate-pulse">Загрузка временной линии…</div>
   if (!data?.length) return <div className="px-4 py-3 text-xs text-slate-400">Нет данных о статусах</div>
 
-  // Определяем диапазон дня для отрисовки
   const firstEntered = new Date(data[0].entered)
   const lastEntered = new Date(data[data.length - 1].entered)
   const dayStart = new Date(firstEntered)
   dayStart.setHours(firstEntered.getHours(), 0, 0, 0)
   const dayEnd = new Date(lastEntered)
   dayEnd.setHours(Math.min(lastEntered.getHours() + 2, 23), 59, 59, 999)
-  const totalMs = dayEnd.getTime() - dayStart.getTime()
+  const totalMs = Math.max(1, dayEnd.getTime() - dayStart.getTime())
 
-  const legendStatuses = Array.from(new Set(data.map((e) => e.status)))
+  // Aggregate totals per group for legend
+  const groupTotals: Record<GroupKey, number> = { work: 0, pause: 0, offline: 0, other: 0 }
+  for (const e of data) groupTotals[classifyStatus(e.status)] += e.duration_sec
+
+  const presentGroups = (Object.keys(groupTotals) as GroupKey[]).filter((k) => groupTotals[k] > 0)
 
   return (
     <div className="px-4 py-3 bg-white border-t border-slate-100">
       {/* Временная линия */}
-      <div className="relative h-9 rounded-md overflow-hidden flex mb-2" style={{ background: '#f1f5f9' }}>
+      <div className="relative h-9 rounded-lg overflow-hidden mb-2" style={{ background: '#f1f5f9' }}>
         {data.map((evt, i) => {
           const start = (new Date(evt.entered).getTime() - dayStart.getTime()) / totalMs * 100
           const dur = Math.max(0.3, (evt.duration_sec * 1000) / totalMs * 100)
-          const { bg, label } = statusColor(evt.status)
+          const group = classifyStatus(evt.status)
+          const { bg } = GROUP_CONFIG[group]
+          const originalLabel = evt.status
           return (
             <div
               key={i}
-              title={`${label}: ${evt.entered.slice(11, 16)} (${Math.round(evt.duration_sec / 60)} мин)`}
+              title={`${GROUP_CONFIG[group].label} (${originalLabel}): ${evt.entered.slice(11, 16)} · ${Math.round(evt.duration_sec / 60)} мин`}
               style={{
                 position: 'absolute',
                 left: `${start}%`,
@@ -73,7 +96,7 @@ function StatusTimeline({ login, workDate, dbOverrides }: { login: string; workD
                 backgroundColor: bg,
                 top: 0,
                 bottom: 0,
-                borderRight: '1px solid rgba(255,255,255,0.3)',
+                borderRight: '1px solid rgba(255,255,255,0.25)',
               }}
             />
           )
@@ -81,7 +104,7 @@ function StatusTimeline({ login, workDate, dbOverrides }: { login: string; workD
       </div>
 
       {/* Метки времени */}
-      <div className="relative h-4 mb-2 text-xs text-slate-400 select-none">
+      <div className="relative h-4 mb-3 text-xs text-slate-400 select-none">
         {data.filter((_, i) => i % Math.max(1, Math.floor(data.length / 8)) === 0).map((evt, i) => {
           const left = (new Date(evt.entered).getTime() - dayStart.getTime()) / totalMs * 100
           return (
@@ -92,19 +115,15 @@ function StatusTimeline({ login, workDate, dbOverrides }: { login: string; workD
         })}
       </div>
 
-      {/* Легенда */}
-      <div className="flex flex-wrap gap-3">
-        {legendStatuses.map((s) => {
-          const { bg, label } = statusColor(s)
-          const totalSec = data.filter((e) => e.status === s).reduce((acc, e) => acc + e.duration_sec, 0)
-          return (
-            <div key={s} className="flex items-center gap-1.5 text-xs text-slate-600">
-              <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: bg }} />
-              <span>{label}</span>
-              <span className="text-slate-400">{Math.round(totalSec / 60)} мин</span>
-            </div>
-          )
-        })}
+      {/* Легенда — 4 группы */}
+      <div className="flex flex-wrap gap-4">
+        {presentGroups.map((g) => (
+          <div key={g} className="flex items-center gap-1.5 text-xs text-slate-600">
+            <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: GROUP_CONFIG[g].bg }} />
+            <span className="font-medium">{GROUP_CONFIG[g].label}</span>
+            <span className="text-slate-400">{Math.round(groupTotals[g] / 60)} мин</span>
+          </div>
+        ))}
       </div>
     </div>
   )

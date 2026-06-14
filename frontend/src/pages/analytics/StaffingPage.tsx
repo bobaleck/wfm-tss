@@ -2,11 +2,12 @@ import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useProjectStore } from '@/store/project'
 import api from '@/api/client'
-import type { WorkloadRow } from '@/types'
+import type { WorkloadRow, Queue } from '@/types'
 import PageHeader from '@/components/common/PageHeader'
 import StatCard from '@/components/common/StatCard'
 import { PageSpinner } from '@/components/ui/Spinner'
 import EmptyState from '@/components/common/EmptyState'
+import QueueFilterDropdown from '@/components/common/QueueFilterDropdown'
 import { AlertCircle, Users, Info, TrendingUp } from 'lucide-react'
 import { format, subDays, addDays } from 'date-fns'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts'
@@ -49,6 +50,7 @@ export default function StaffingPage() {
   const [targetSec, setTargetSec] = useState(20)
   const [shrinkage, setShrinkage] = useState(30)
   const [dayFilter, setDayFilter] = useState<DayFilter>('all')
+  const [selectedQueues, setSelectedQueues] = useState<Set<string>>(new Set())
 
   // Параметры прогноза
   const [projWeeks, setProjWeeks] = useState(4)
@@ -62,6 +64,16 @@ export default function StaffingPage() {
       }).then((r) => r.data.data as WorkloadRow[]),
     enabled: !!activeProject,
   })
+
+  const { data: queuesData } = useQuery({
+    queryKey: ['queues', activeProject?.customer_uuid],
+    queryFn: () =>
+      api.get('/analytics/queues', { params: { partner_uuid: activeProject!.customer_uuid } })
+        .then((r) => r.data.data as Queue[]),
+    enabled: !!activeProject,
+  })
+
+  const allQueues = useMemo(() => (queuesData || []).map((q) => q.name).sort(), [queuesData])
 
   // Фактические операторы по часам
   const { data: actualOpsData } = useQuery({
@@ -83,6 +95,7 @@ export default function StaffingPage() {
     if (!data?.length) return []
 
     const filtered = data.filter((row) => {
+      if (selectedQueues.size > 0 && !selectedQueues.has(row.queue_name)) return false
       if (dayFilter === 'weekday') return !isWeekend(row.period_start)
       if (dayFilter === 'weekend') return isWeekend(row.period_start)
       return true
@@ -115,7 +128,7 @@ export default function StaffingPage() {
         actual: actualByHour[h] ?? null,
       }
     }).filter((r) => r.avgCalls > 0 || r.actual != null)
-  }, [data, targetSl, targetSec, shrinkage, dayFilter, actualByHour])
+  }, [data, targetSl, targetSec, shrinkage, dayFilter, actualByHour, selectedQueues])
 
   // Прогноз на N недель вперёд
   const projectionData = useMemo(() => {
@@ -205,6 +218,9 @@ export default function StaffingPage() {
               ))}
             </div>
           </div>
+          {allQueues.length > 1 && (
+            <QueueFilterDropdown queues={allQueues} selected={selectedQueues} onChange={setSelectedQueues} />
+          )}
         </div>
         <div className="mt-3 flex items-start gap-2 bg-blue-50 rounded-lg px-3 py-2">
           <Info size={14} className="text-blue-500 mt-0.5 flex-shrink-0" />

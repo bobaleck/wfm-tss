@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useProjectStore } from '@/store/project'
 import api from '@/api/client'
@@ -7,7 +7,8 @@ import PageHeader from '@/components/common/PageHeader'
 import { PageSpinner } from '@/components/ui/Spinner'
 import Badge from '@/components/ui/Badge'
 import EmptyState from '@/components/common/EmptyState'
-import { PhoneCall, AlertCircle } from 'lucide-react'
+import QueueFilterDropdown from '@/components/common/QueueFilterDropdown'
+import { PhoneCall, AlertCircle, ChevronUp, ChevronDown } from 'lucide-react'
 import { format, subDays } from 'date-fns'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
@@ -17,12 +18,48 @@ const CHANNEL_LABELS: Record<string, string> = {
   VOICE: 'Голос', CHAT: 'Чат', EMAIL: 'Email', VIDEO: 'Видео',
 }
 
+type QueueSortKey = 'name' | 'channel' | 'target_sl' | 'answer_sec' | 'status'
+type PeriodSortKey = 'period' | 'queue_name' | 'total' | 'handled' | 'lost' | 'avg_talk_sec' | 'sl_percent'
+
+function SortTh<K extends string>({
+  label, sortKey, current, dir, onSort, className = '',
+}: { label: string; sortKey: K; current: K; dir: 'asc' | 'desc'; onSort: (k: K) => void; className?: string }) {
+  const active = current === sortKey
+  return (
+    <th
+      className={`text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:text-slate-700 group ${className}`}
+      onClick={() => onSort(sortKey)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <span className={`transition-opacity ${active ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}>
+          {active && dir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </span>
+      </span>
+    </th>
+  )
+}
+
 export default function QueuesPage() {
   const { activeProject } = useProjectStore()
   const [begin, setBegin] = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'))
   const [end, setEnd] = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [selectedQueue, setSelectedQueue] = useState('')
-  const [interval, setInterval] = useState<'hour' | 'day'>('day')
+  const [selectedQueues, setSelectedQueues] = useState<Set<string>>(new Set())
+  const [interval, setIntervalValue] = useState<'hour' | 'day'>('day')
+
+  const [queueSort, setQueueSort] = useState<QueueSortKey>('name')
+  const [queueDir, setQueueDir] = useState<'asc' | 'desc'>('asc')
+  const [periodSort, setPeriodSort] = useState<PeriodSortKey>('period')
+  const [periodDir, setPeriodDir] = useState<'asc' | 'desc'>('asc')
+
+  const handleQueueSort = (k: QueueSortKey) => {
+    if (queueSort === k) setQueueDir((d) => d === 'asc' ? 'desc' : 'asc')
+    else { setQueueSort(k); setQueueDir('asc') }
+  }
+  const handlePeriodSort = (k: PeriodSortKey) => {
+    if (periodSort === k) setPeriodDir((d) => d === 'asc' ? 'desc' : 'asc')
+    else { setPeriodSort(k); setPeriodDir('asc') }
+  }
 
   const { data: queues, isLoading: queuesLoading } = useQuery({
     queryKey: ['queues', activeProject?.customer_uuid],
@@ -41,6 +78,17 @@ export default function QueuesPage() {
     enabled: !!activeProject,
   })
 
+  const allQueueNames = useMemo(() => (queues || []).map((q) => q.name).sort(), [queues])
+
+  const sortedQueues = useMemo(() => {
+    return [...(queues || [])].sort((a, b) => {
+      const av = (a as any)[queueSort] ?? ''
+      const bv = (b as any)[queueSort] ?? ''
+      const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv))
+      return queueDir === 'asc' ? cmp : -cmp
+    })
+  }, [queues, queueSort, queueDir])
+
   if (!activeProject) return (
     <div>
       <PageHeader title="Очереди" />
@@ -51,7 +99,7 @@ export default function QueuesPage() {
     </div>
   )
 
-  // ─── Агрегаты по очередям для графика ────────────────────────────────────
+  // ─── Aggregate stats per queue ────────────────────────────────────────────────
   const perQueue: Record<string, { name: string; total: number; handled: number; lost: number; slSum: number; slCount: number }> = {}
   for (const r of workload || []) {
     const q = r.queue_name || '—'
@@ -65,10 +113,19 @@ export default function QueuesPage() {
     .map((d) => ({ ...d, sl: d.slCount > 0 ? Math.round(d.slSum / d.slCount) : null }))
     .sort((a, b) => b.total - a.total)
 
-  const wQueues = chartData.map((d) => d.name)
-  const wFiltered = selectedQueue
-    ? (workload || []).filter((r) => r.queue_name === selectedQueue)
-    : (workload || [])
+  const wFiltered = useMemo(() => {
+    const base = workload || []
+    return selectedQueues.size === 0 ? base : base.filter((r) => selectedQueues.has(r.queue_name))
+  }, [workload, selectedQueues])
+
+  const sortedPeriod = useMemo(() => {
+    return [...wFiltered].sort((a, b) => {
+      const av = (a as any)[periodSort] ?? ''
+      const bv = (b as any)[periodSort] ?? ''
+      const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv))
+      return periodDir === 'asc' ? cmp : -cmp
+    })
+  }, [wFiltered, periodSort, periodDir])
 
   const channels = [...new Set((queues || []).map((q) => q.channel))].filter(Boolean)
 
@@ -97,13 +154,15 @@ export default function QueuesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100">
-                  {['Очередь', 'Канал', 'Целевой SL (%)', 'Порог ответа (с)', 'Статус'].map((h) => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                  ))}
+                  <SortTh label="Очередь" sortKey="name" current={queueSort} dir={queueDir} onSort={handleQueueSort} />
+                  <SortTh label="Канал" sortKey="channel" current={queueSort} dir={queueDir} onSort={handleQueueSort} />
+                  <SortTh label="Целевой SL (%)" sortKey="target_sl" current={queueSort} dir={queueDir} onSort={handleQueueSort} />
+                  <SortTh label="Порог ответа (с)" sortKey="answer_sec" current={queueSort} dir={queueDir} onSort={handleQueueSort} />
+                  <SortTh label="Статус" sortKey="status" current={queueSort} dir={queueDir} onSort={handleQueueSort} />
                 </tr>
               </thead>
               <tbody>
-                {queues!.map((q) => (
+                {sortedQueues.map((q) => (
                   <tr key={q.queue_uuid} className="border-b border-slate-50 hover:bg-slate-50">
                     <td className="px-4 py-3 font-medium text-slate-900">{q.name}</td>
                     <td className="px-4 py-3"><Badge label={CHANNEL_LABELS[q.channel] || q.channel || '—'} color="blue" /></td>
@@ -118,38 +177,34 @@ export default function QueuesPage() {
         </>
       )}
 
-      {/* Разделитель */}
+      {/* Divider */}
       <div className="flex items-center gap-3 mb-6">
         <div className="flex-1 h-px bg-slate-200" />
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Статистика за период</p>
         <div className="flex-1 h-px bg-slate-200" />
       </div>
 
-      {/* Фильтры */}
+      {/* Filters */}
       <div className="card p-4 mb-6 flex flex-wrap items-end gap-4">
         <div><label className="label">С</label><input type="date" className="input w-40" value={begin} onChange={(e) => setBegin(e.target.value)} /></div>
         <div><label className="label">По</label><input type="date" className="input w-40" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
         <div>
           <label className="label">Интервал</label>
-          <select className="input w-32" value={interval} onChange={(e) => setInterval(e.target.value as any)}>
+          <select className="input w-32" value={interval} onChange={(e) => setIntervalValue(e.target.value as any)}>
             <option value="day">По дням</option>
             <option value="hour">По часам</option>
           </select>
         </div>
-        <div>
-          <label className="label">Очередь</label>
-          <select className="input w-60" value={selectedQueue} onChange={(e) => setSelectedQueue(e.target.value)}>
-            <option value="">Все очереди</option>
-            {wQueues.map((q) => <option key={q} value={q}>{q}</option>)}
-          </select>
-        </div>
+        {allQueueNames.length > 1 && (
+          <QueueFilterDropdown queues={allQueueNames} selected={selectedQueues} onChange={setSelectedQueues} />
+        )}
       </div>
 
       {workloadLoading ? <PageSpinner /> : !chartData.length ? (
         <EmptyState title="Нет данных за период" icon={<PhoneCall size={40} />} />
       ) : (
         <>
-          {/* График: обработано/потеряно по очередям */}
+          {/* Queue comparison chart */}
           <div className="card p-6 mb-6">
             <h2 className="text-sm font-semibold text-slate-800 mb-1">Сравнение очередей за период</h2>
             <p className="text-xs text-slate-400 mb-4">Обработанные и потерянные вызовы по каждой очереди</p>
@@ -171,7 +226,6 @@ export default function QueuesPage() {
               </BarChart>
             </ResponsiveContainer>
 
-            {/* SL по очередям */}
             <div className="mt-4 flex flex-wrap gap-3">
               {chartData.filter((d) => d.sl !== null).map((d) => (
                 <div key={d.name} className="flex items-center gap-1.5 text-xs">
@@ -184,22 +238,31 @@ export default function QueuesPage() {
             </div>
           </div>
 
-          {/* Детализация по периодам */}
+          {/* Period table */}
           <div className="card overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-800">Детализация по периодам</h2>
+              {selectedQueues.size > 0 && (
+                <span className="text-xs text-brand-600 font-medium">
+                  Очередей: {selectedQueues.size}
+                </span>
+              )}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-100">
-                    {['Период', 'Очередь', 'Поступило', 'Обработано', 'Потеряно', 'АНТ (с)', 'SL (%)'].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
+                    <SortTh label="Период" sortKey="period" current={periodSort} dir={periodDir} onSort={handlePeriodSort} />
+                    <SortTh label="Очередь" sortKey="queue_name" current={periodSort} dir={periodDir} onSort={handlePeriodSort} />
+                    <SortTh label="Поступило" sortKey="total" current={periodSort} dir={periodDir} onSort={handlePeriodSort} />
+                    <SortTh label="Обработано" sortKey="handled" current={periodSort} dir={periodDir} onSort={handlePeriodSort} />
+                    <SortTh label="Потеряно" sortKey="lost" current={periodSort} dir={periodDir} onSort={handlePeriodSort} />
+                    <SortTh label="АНТ (с)" sortKey="avg_talk_sec" current={periodSort} dir={periodDir} onSort={handlePeriodSort} />
+                    <SortTh label="SL (%)" sortKey="sl_percent" current={periodSort} dir={periodDir} onSort={handlePeriodSort} />
                   </tr>
                 </thead>
                 <tbody>
-                  {wFiltered.slice(0, 300).map((row, i) => (
+                  {sortedPeriod.slice(0, 400).map((row, i) => (
                     <tr key={i} className="border-b border-slate-50 hover:bg-slate-50">
                       <td className="px-4 py-2.5 font-mono text-xs text-slate-600 whitespace-nowrap">
                         {row.period_start?.slice(0, interval === 'hour' ? 16 : 10).replace('T', ' ')}
@@ -218,8 +281,8 @@ export default function QueuesPage() {
                       </td>
                     </tr>
                   ))}
-                  {wFiltered.length > 300 && (
-                    <tr><td colSpan={7} className="text-center py-3 text-slate-400 text-xs">Показано 300 из {wFiltered.length} строк</td></tr>
+                  {sortedPeriod.length > 400 && (
+                    <tr><td colSpan={7} className="text-center py-3 text-slate-400 text-xs">Показано 400 из {sortedPeriod.length} строк</td></tr>
                   )}
                 </tbody>
               </table>
