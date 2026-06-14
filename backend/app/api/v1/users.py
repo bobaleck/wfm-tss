@@ -5,6 +5,7 @@ from typing import List
 from app.core.database import get_db
 from app.core.security import get_password_hash
 from app.models.user import User
+from app.models.audit import UserProject
 from app.schemas.user import UserCreate, UserUpdate, UserOut
 from app.api.deps import get_current_user, require_admin
 
@@ -68,3 +69,38 @@ def delete_user(user_id: int, db: Session = Depends(get_db),
         raise HTTPException(400, detail="Нельзя удалить себя")
     db.delete(user)
     db.commit()
+
+
+# ─── User-project assignments ─────────────────────────────────────────────────
+
+@router.get("/{user_id}/projects")
+def get_user_projects(user_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+    rows = db.query(UserProject).filter(UserProject.user_id == user_id).all()
+    return [{"project_uuid": r.project_uuid} for r in rows]
+
+
+@router.post("/{user_id}/projects")
+def assign_project(user_id: int, body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    project_uuid = body.get("project_uuid")
+    if not project_uuid:
+        raise HTTPException(400, detail="project_uuid обязателен")
+    if not db.query(User).filter(User.id == user_id).first():
+        raise HTTPException(404, detail="Пользователь не найден")
+    existing = db.query(UserProject).filter(
+        UserProject.user_id == user_id, UserProject.project_uuid == project_uuid
+    ).first()
+    if not existing:
+        db.add(UserProject(user_id=user_id, project_uuid=project_uuid))
+        db.commit()
+    return {"ok": True, "user_id": user_id, "project_uuid": project_uuid}
+
+
+@router.delete("/{user_id}/projects/{project_uuid}")
+def remove_project(user_id: int, project_uuid: str, db: Session = Depends(get_db), _=Depends(require_admin)):
+    row = db.query(UserProject).filter(
+        UserProject.user_id == user_id, UserProject.project_uuid == project_uuid
+    ).first()
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"ok": True}

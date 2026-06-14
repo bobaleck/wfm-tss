@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import date
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, check_project_access
 from app.core.database import get_db
 from app.models.audit import IntegrationSettings, QueueSetting
 from app.models.employee import Employee
@@ -34,7 +34,8 @@ def get_projects(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 
 @router.get("/queues")
-def get_queues(partner_uuid: str, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def get_queues(partner_uuid: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    check_project_access(partner_uuid, current_user, db)
     try:
         queues = naumen.get_queues(partner_uuid, _build_overrides(db))
         # Apply WFM overrides (target_sl, answer_sec) on top of Naumen values
@@ -61,8 +62,9 @@ def get_workload(
     end: date = Query(...),
     interval: str = "hour",
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    check_project_access(partner_uuid, current_user, db)
     if end <= begin:
         raise HTTPException(400, detail="end должна быть больше begin")
     try:
@@ -78,8 +80,9 @@ def get_operator_load(
     begin: date = Query(...),
     end: date = Query(...),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    check_project_access(partner_uuid, current_user, db)
     if end <= begin:
         raise HTTPException(400, detail="end должна быть больше begin")
     try:
@@ -183,18 +186,20 @@ def get_current_operators(
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Текущий статус операторов проекта (последний известный статус из Naumen)."""
+    """Текущий статус операторов проекта — берёт логины прямо из Naumen."""
+    # Local name overrides (our DB has richer names)
     employees = db.query(Employee).filter(
         Employee.project_uuid == partner_uuid,
         Employee.naumen_login.isnot(None),
     ).all()
-    login_map = {e.naumen_login: e.full_name for e in employees}
-    logins = list(login_map.keys())
+    local_names = {e.naumen_login: e.full_name for e in employees}
     try:
-        rows = naumen.get_current_online_operators(logins, _build_overrides(db))
+        rows = naumen.get_current_operators_for_project(partner_uuid, _build_overrides(db))
         for r in rows:
-            r["employee_name"] = login_map.get(r.get("login"), r.get("login"))
-        return {"data": rows, "total_logins": len(logins)}
+            local = local_names.get(r.get("login"))
+            if local:
+                r["employee_name"] = local
+        return {"data": rows, "total_logins": len(rows)}
     except Exception as e:
         raise HTTPException(503, detail=str(e))
 

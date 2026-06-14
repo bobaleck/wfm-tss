@@ -5,7 +5,8 @@ from typing import Optional
 
 from app.core.database import get_db
 from app.models.audit import IntegrationSettings, TrackedProject
-from app.api.deps import require_admin, get_current_user
+from app.api.deps import require_admin, get_current_user, get_user_project_uuids
+from app.models.user import User
 import app.services.naumen_db as naumen
 
 router = APIRouter()
@@ -133,8 +134,12 @@ def get_available_projects(db: Session = Depends(get_db), _=Depends(require_admi
 
 
 @router.get("/tracked-projects")
-def list_tracked_projects(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    projects = db.query(TrackedProject).order_by(TrackedProject.customer_name).all()
+def list_tracked_projects(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    allowed_uuids = get_user_project_uuids(current_user, db)
+    q = db.query(TrackedProject).order_by(TrackedProject.customer_name)
+    if allowed_uuids is not None:
+        q = q.filter(TrackedProject.customer_uuid.in_(allowed_uuids))
+    projects = q.all()
     return [
         {
             "customer_uuid": p.customer_uuid,

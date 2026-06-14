@@ -3,7 +3,7 @@ export interface User {
   username: string
   email: string
   full_name: string | null
-  role: 'admin' | 'manager' | 'analyst' | 'viewer'
+  role: UserRole
   active_project_uuid: string | null
   is_active: boolean
   is_superuser: boolean
@@ -180,6 +180,7 @@ export interface OperatorLoadRow {
   total_talk_sec: number | null
   avg_answer_sec: number | null
   sl_percent: number | null
+  idle_sec: number | null
 }
 
 export interface IntegrationSettings {
@@ -194,12 +195,25 @@ export interface IntegrationSettings {
   is_active: boolean
 }
 
-export type UserRole = 'admin' | 'manager' | 'analyst' | 'viewer'
+export type UserRole = 'admin' | 'project_manager' | 'analyst' | 'hr' | 'customer' | 'viewer'
+
 export const ROLE_LABELS: Record<UserRole, string> = {
-  admin:   'Администратор',
-  manager: 'Менеджер',
-  analyst: 'Аналитик',
-  viewer:  'Читатель',
+  admin:           'Администратор',
+  project_manager: 'Менеджер проекта',
+  analyst:         'Аналитик',
+  hr:              'HR-менеджер',
+  customer:        'Заказчик',
+  viewer:          'Наблюдатель',
+}
+
+// Which nav sections each role can access
+export const ROLE_ALLOWED_SECTIONS: Record<UserRole, string[]> = {
+  admin:           ['dashboard', 'team', 'analytics', 'worktime', 'reports', 'settings', 'users', 'journal', 'integrations', 'about', 'docs'],
+  project_manager: ['dashboard', 'team', 'analytics', 'worktime', 'reports', 'about', 'docs'],
+  analyst:         ['dashboard', 'analytics', 'reports', 'about', 'docs'],
+  hr:              ['dashboard', 'team', 'worktime', 'reports', 'about', 'docs'],
+  customer:        ['dashboard', 'analytics', 'about'],
+  viewer:          ['dashboard', 'analytics', 'about'],
 }
 
 export const ABSENCE_TYPES: Record<string, string> = {

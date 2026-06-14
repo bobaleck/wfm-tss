@@ -7,70 +7,85 @@ import {
   UserCog, ScrollText, Plug, Info, BookOpen, ChevronDown, ChevronRight,
   PhoneCall, Clock, UsersIcon, Radio, FolderOpen,
 } from 'lucide-react'
+import { useAuthStore } from '@/store/auth'
+import type { UserRole } from '@/types'
+import { ROLE_ALLOWED_SECTIONS } from '@/types'
 
 interface NavItem {
   label: string
   icon: React.ReactNode
   to?: string
-  children?: NavItem[]
+  section: string
+  children?: (NavItem & { to: string })[]
 }
 
 const nav: NavItem[] = [
-  { label: 'Сводка', icon: <LayoutDashboard size={18} />, to: '/dashboard' },
+  { label: 'Сводка', icon: <LayoutDashboard size={18} />, to: '/dashboard', section: 'dashboard' },
   {
     label: 'Команда',
     icon: <Users size={18} />,
+    section: 'team',
     children: [
-      { label: 'Сотрудники', icon: <UserCheck size={16} />, to: '/team/employees' },
-      { label: 'Команды',    icon: <UsersRound size={16} />, to: '/team/teams' },
-      { label: 'Навыки',     icon: <Star size={16} />,      to: '/team/skills' },
+      { label: 'Сотрудники', icon: <UserCheck size={16} />, to: '/team/employees', section: 'team' },
+      { label: 'Команды',    icon: <UsersRound size={16} />, to: '/team/teams', section: 'team' },
+      { label: 'Навыки',     icon: <Star size={16} />,      to: '/team/skills', section: 'team' },
     ],
   },
   {
     label: 'Аналитика',
     icon: <BarChart3 size={18} />,
+    section: 'analytics',
     children: [
-      { label: 'Очереди',           icon: <PhoneCall size={16} />,    to: '/analytics/queues' },
-      { label: 'Нагрузка',          icon: <TrendingUp size={16} />,   to: '/analytics/workload' },
-      { label: 'Нагр. операторов',  icon: <UserCheck size={16} />,    to: '/analytics/operator-load' },
-      { label: 'Внутридневная',     icon: <Clock size={16} />,         to: '/analytics/intraday' },
-      { label: 'Потребность',       icon: <UsersIcon size={16} />,     to: '/analytics/staffing' },
-      { label: 'Онлайн',            icon: <Radio size={16} />,         to: '/analytics/live' },
+      { label: 'Очереди',           icon: <PhoneCall size={16} />,    to: '/analytics/queues', section: 'analytics' },
+      { label: 'Нагрузка',          icon: <TrendingUp size={16} />,   to: '/analytics/workload', section: 'analytics' },
+      { label: 'Нагр. операторов',  icon: <UserCheck size={16} />,    to: '/analytics/operator-load', section: 'analytics' },
+      { label: 'Внутридневная',     icon: <Clock size={16} />,         to: '/analytics/intraday', section: 'analytics' },
+      { label: 'Потребность',       icon: <UsersIcon size={16} />,     to: '/analytics/staffing', section: 'analytics' },
+      { label: 'Онлайн',            icon: <Radio size={16} />,         to: '/analytics/live', section: 'analytics' },
     ],
   },
   {
     label: 'Рабочее время',
     icon: <Clock4 size={18} />,
+    section: 'worktime',
     children: [
-      { label: 'Графики',    icon: <Calendar size={16} />,    to: '/worktime/schedules' },
-      { label: 'Отсутствия', icon: <CalendarOff size={16} />, to: '/worktime/absences' },
-      { label: 'Смены',      icon: <Clock4 size={16} />,      to: '/worktime/shifts' },
+      { label: 'Графики',    icon: <Calendar size={16} />,    to: '/worktime/schedules', section: 'worktime' },
+      { label: 'Отсутствия', icon: <CalendarOff size={16} />, to: '/worktime/absences', section: 'worktime' },
+      { label: 'Смены',      icon: <Clock4 size={16} />,      to: '/worktime/shifts', section: 'worktime' },
     ],
   },
 ]
 
 const bottom: NavItem[] = [
-  { label: 'Отчёты',        icon: <FileBarChart2 size={18} />, to: '/reports' },
+  { label: 'Отчёты',        icon: <FileBarChart2 size={18} />, to: '/reports', section: 'reports' },
   {
     label: 'Настройки',
     icon: <Settings2 size={18} />,
+    section: 'settings',
     children: [
-      { label: 'Общие',    icon: <Settings2 size={16} />,    to: '/settings' },
-      { label: 'Проекты',  icon: <FolderOpen size={16} />,   to: '/settings/projects' },
+      { label: 'Общие',    icon: <Settings2 size={16} />,    to: '/settings', section: 'settings' },
+      { label: 'Проекты',  icon: <FolderOpen size={16} />,   to: '/settings/projects', section: 'settings' },
     ],
   },
-  { label: 'Пользователи',  icon: <UserCog size={18} />,      to: '/users' },
-  { label: 'Журнал',        icon: <ScrollText size={18} />,   to: '/journal' },
-  { label: 'Интеграции',    icon: <Plug size={18} />,         to: '/integrations' },
-  { label: 'О системе',     icon: <Info size={18} />,         to: '/about' },
-  { label: 'Документация',  icon: <BookOpen size={18} />,     to: '/docs' },
+  { label: 'Пользователи',  icon: <UserCog size={18} />,      to: '/users', section: 'users' },
+  { label: 'Журнал',        icon: <ScrollText size={18} />,   to: '/journal', section: 'journal' },
+  { label: 'Интеграции',    icon: <Plug size={18} />,         to: '/integrations', section: 'integrations' },
+  { label: 'О системе',     icon: <Info size={18} />,         to: '/about', section: 'about' },
+  { label: 'Документация',  icon: <BookOpen size={18} />,     to: '/docs', section: 'docs' },
 ]
 
 function pathMatches(pathname: string, to: string): boolean {
   return pathname === to || pathname.startsWith(to + '/')
 }
 
-function NavSection({ item }: { item: NavItem }) {
+function canSee(role: UserRole | undefined, section: string): boolean {
+  if (!role) return false
+  return ROLE_ALLOWED_SECTIONS[role]?.includes(section) ?? false
+}
+
+function NavSection({ item, role }: { item: NavItem; role: UserRole | undefined }) {
+  if (!canSee(role, item.section)) return null
+
   const location = useLocation()
   const isChildActive = item.children?.some((c) => c.to && pathMatches(location.pathname, c.to))
   const [open, setOpen] = useState(isChildActive ?? false)
@@ -90,6 +105,9 @@ function NavSection({ item }: { item: NavItem }) {
     )
   }
 
+  const visibleChildren = item.children?.filter((c) => canSee(role, c.section)) ?? []
+  if (visibleChildren.length === 0) return null
+
   return (
     <div>
       <button
@@ -102,10 +120,10 @@ function NavSection({ item }: { item: NavItem }) {
       </button>
       {open && (
         <div className="ml-4 mt-0.5 space-y-0.5 border-l border-white/10 pl-3">
-          {item.children?.map((child) => (
+          {visibleChildren.map((child) => (
             <NavLink
               key={child.to}
-              to={child.to!}
+              to={child.to}
               end
               className={({ isActive }) =>
                 clsx('sidebar-item text-xs', isActive && 'active')
@@ -122,6 +140,9 @@ function NavSection({ item }: { item: NavItem }) {
 }
 
 export default function Sidebar() {
+  const { user } = useAuthStore()
+  const role = (user?.role ?? 'viewer') as UserRole
+
   return (
     <aside className="flex flex-col w-60 min-h-screen bg-sidebar-bg border-r border-white/5">
       {/* Logo */}
@@ -136,14 +157,14 @@ export default function Sidebar() {
       {/* Main nav */}
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
         {nav.map((item) => (
-          <NavSection key={item.label} item={item} />
+          <NavSection key={item.label} item={item} role={role} />
         ))}
       </nav>
 
       {/* Bottom nav */}
       <div className="p-3 border-t border-white/5 space-y-0.5">
         {bottom.map((item) => (
-          <NavSection key={item.label} item={item} />
+          <NavSection key={item.label} item={item} role={role} />
         ))}
       </div>
     </aside>

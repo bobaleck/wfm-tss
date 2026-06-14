@@ -9,6 +9,7 @@ import Badge from '@/components/ui/Badge'
 import EmptyState from '@/components/common/EmptyState'
 import QueueFilterDropdown from '@/components/common/QueueFilterDropdown'
 import { PhoneCall, AlertCircle, ChevronUp, ChevronDown } from 'lucide-react'
+import { slColor } from '@/utils/sl'
 import { format, subDays } from 'date-fns'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
@@ -109,8 +110,15 @@ export default function QueuesPage() {
     perQueue[q].lost += r.lost || 0
     if (r.sl_percent != null) { perQueue[q].slSum += r.sl_percent; perQueue[q].slCount++ }
   }
+  // Build target_sl lookup by queue name
+  const queueTargetSl = useMemo(() => {
+    const map: Record<string, number | null> = {}
+    for (const q of queues || []) map[q.name] = q.target_sl ?? null
+    return map
+  }, [queues])
+
   const chartData = Object.values(perQueue)
-    .map((d) => ({ ...d, sl: d.slCount > 0 ? Math.round(d.slSum / d.slCount) : null }))
+    .map((d) => ({ ...d, sl: d.slCount > 0 ? Math.round(d.slSum / d.slCount) : null, target_sl: queueTargetSl[d.name] }))
     .sort((a, b) => b.total - a.total)
 
   const wFiltered = useMemo(() => {
@@ -230,8 +238,8 @@ export default function QueuesPage() {
               {chartData.filter((d) => d.sl !== null).map((d) => (
                 <div key={d.name} className="flex items-center gap-1.5 text-xs">
                   <span className="text-slate-500 truncate max-w-32">{d.name}</span>
-                  <span className={`font-semibold ${d.sl! >= 80 ? 'text-green-600' : d.sl! >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
-                    SL {d.sl}%
+                  <span className={`font-semibold ${slColor(d.sl, d.target_sl)}`}>
+                    SL {d.sl}%{d.target_sl != null ? ` / цель ${d.target_sl}%` : ''}
                   </span>
                 </div>
               ))}
@@ -274,7 +282,7 @@ export default function QueuesPage() {
                       <td className="px-4 py-2.5 text-slate-600">{row.avg_talk_sec ?? '—'}</td>
                       <td className="px-4 py-2.5">
                         {row.sl_percent != null ? (
-                          <span className={`font-medium ${row.sl_percent >= 80 ? 'text-green-600' : row.sl_percent >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
+                          <span className={`font-medium ${slColor(row.sl_percent, queueTargetSl[row.queue_name])}`}>
                             {row.sl_percent}%
                           </span>
                         ) : '—'}

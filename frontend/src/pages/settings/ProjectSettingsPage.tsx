@@ -186,7 +186,7 @@ export default function ProjectSettingsPage() {
 
   const [showManualForm, setShowManualForm] = useState(false)
   const [manualForm, setManualForm] = useState({
-    customer_name: '', customer_type: 'inbound', responsible_manager: '', target_sl: '',
+    customer_name: '', responsible_manager: '', target_sl: '',
   })
   const [availableProjects, setAvailableProjects] = useState<Project[]>([])
   const [loadingAvailable, setLoadingAvailable] = useState(false)
@@ -235,13 +235,12 @@ export default function ProjectSettingsPage() {
     addMutation.mutate({
       customer_uuid: '',
       customer_name: manualForm.customer_name.trim(),
-      customer_type: manualForm.customer_type,
       responsible_manager: manualForm.responsible_manager.trim() || null,
       target_sl: manualForm.target_sl ? parseInt(manualForm.target_sl) : null,
       is_manual: true,
     }, {
       onSuccess: () => {
-        setManualForm({ customer_name: '', customer_type: 'inbound', responsible_manager: '', target_sl: '' })
+        setManualForm({ customer_name: '', responsible_manager: '', target_sl: '' })
         setShowManualForm(false)
       },
     })
@@ -299,20 +298,11 @@ export default function ProjectSettingsPage() {
             <form onSubmit={handleAddManual} className="mb-5 p-4 bg-brand-50 border border-brand-200 rounded-xl space-y-3">
               <h3 className="text-sm font-semibold text-brand-800">Новый проект (вручную)</h3>
               <div className="grid grid-cols-2 gap-3">
-                <div>
+                <div className="col-span-2">
                   <label className="label">Название *</label>
                   <input className="input" required value={manualForm.customer_name}
                     onChange={(e) => setManualForm({ ...manualForm, customer_name: e.target.value })}
                     placeholder="Входящие 2024" />
-                </div>
-                <div>
-                  <label className="label">Тип</label>
-                  <select className="input" value={manualForm.customer_type}
-                    onChange={(e) => setManualForm({ ...manualForm, customer_type: e.target.value })}>
-                    <option value="inbound">Входящий</option>
-                    <option value="outbound">Исходящий</option>
-                    <option value="blended">Смешанный</option>
-                  </select>
                 </div>
                 <div>
                   <label className="label">Менеджер</label>

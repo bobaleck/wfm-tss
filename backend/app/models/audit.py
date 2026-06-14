@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, func
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, UniqueConstraint, func
 from app.core.database import Base
 
 
@@ -53,3 +53,14 @@ class QueueSetting(Base):
     queue_name = Column(String(300), nullable=False)
     target_sl = Column(Integer, nullable=True)
     answer_sec = Column(Integer, nullable=True)
+
+
+class UserProject(Base):
+    """Maps users (project_manager / customer roles) to their allowed projects."""
+    __tablename__ = "user_projects"
+    __table_args__ = (UniqueConstraint("user_id", "project_uuid", name="uq_user_project"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_uuid = Column(String(100), nullable=False, index=True)
+    added_at = Column(DateTime, server_default=func.now())

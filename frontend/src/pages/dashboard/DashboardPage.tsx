@@ -12,6 +12,7 @@ import {
   Users, PhoneCall, TrendingUp, CheckCircle2, AlertCircle, Clock, AlertTriangle,
   UserCheck, Clock4, ArrowRight,
 } from 'lucide-react'
+import { slColor, slBarColor } from '@/utils/sl'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from 'recharts'
@@ -282,27 +283,24 @@ export default function DashboardPage() {
           </div>
           <div className="space-y-2">
             {(queuesQuery.data || []).map((q: any) => {
-              const sl = q.target_sl ?? null
+              const targetSl = q.target_sl ?? null
               const ch = q.channel ?? ''
               return (
                 <div key={q.name} className="flex items-center gap-3">
                   <div className="w-48 min-w-0 flex-shrink-0">
                     <p className="text-sm text-slate-700 truncate" title={q.name}>{q.name}</p>
-                    {ch && <p className="text-xs text-slate-400">{ch}</p>}
+                    <p className="text-xs text-slate-400">{ch || ''}{targetSl != null ? (ch ? ` · цель ${targetSl}%` : `цель ${targetSl}%`) : ''}</p>
                   </div>
                   <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                    {sl !== null && (
+                    {targetSl !== null && (
                       <div
-                        className={`h-full rounded-full transition-all ${sl >= 80 ? 'bg-green-400' : sl >= 60 ? 'bg-yellow-400' : 'bg-red-400'}`}
-                        style={{ width: `${Math.min(sl, 100)}%` }}
+                        className="h-full rounded-full transition-all"
+                        style={{ width: `${Math.min(targetSl, 100)}%`, backgroundColor: slBarColor(targetSl, targetSl) }}
                       />
                     )}
                   </div>
-                  <span className={`text-sm font-semibold w-14 text-right flex-shrink-0 ${
-                    sl === null ? 'text-slate-300' :
-                    sl >= 80 ? 'text-green-600' : sl >= 60 ? 'text-yellow-600' : 'text-red-600'
-                  }`}>
-                    {sl !== null ? `${sl}%` : '—'}
+                  <span className={`text-sm font-semibold w-14 text-right flex-shrink-0 ${targetSl === null ? 'text-slate-300' : slColor(targetSl, targetSl)}`}>
+                    {targetSl !== null ? `${targetSl}%` : '—'}
                   </span>
                 </div>
               )

@@ -183,9 +183,16 @@ def get_operator_load(partner_uuid: str, begin_date: str, end_date: str,
                           cl_rd.dst_id, cl_rd.dst_abonent)
     ),
     status_summary AS (
+        -- idle_sec = time in pause/unavailable statuses (matches "Простой" group from ShiftsPage)
         SELECT
             sc.login,
-            ROUND(SUM(sc.duration) FILTER (WHERE sc.status = 'normal')::numeric, 0) AS normal_sec
+            ROUND(SUM(COALESCE(sc.duration, 0)) FILTER (
+                WHERE lower(sc.status) NOT IN (
+                    'normal', 'ready', 'available', 'online', 'ringing', 'speaking',
+                    'inservice', 'ringing#voice', 'speaking#voice',
+                    'offline', 'logged_out', 'signedoff', 'loggedoff'
+                )
+            )::numeric, 0) AS idle_sec
         FROM status_changes sc
         WHERE sc.entered >= %(begin_date)s::timestamp
           AND sc.entered <  %(end_date)s::timestamp
@@ -200,7 +207,7 @@ def get_operator_load(partner_uuid: str, begin_date: str, end_date: str,
         oc.total_talk_sec AS total_talk_sec,
         oc.avg_answer_sec AS avg_answer_sec,
         oc.sl_percent     AS sl_percent,
-        GREATEST(0, COALESCE(ss.normal_sec, 0) - COALESCE(oc.total_talk_sec, 0)) AS idle_sec
+        COALESCE(ss.idle_sec, 0) AS idle_sec
     FROM operator_calls oc
     LEFT JOIN mv_employee em ON em.login = oc.login
     LEFT JOIN status_summary ss ON ss.login = oc.login
@@ -458,17 +465,58 @@ def get_actual_operators_by_hour(logins: list, begin_date: str, end_date: str,
     return _execute(query, {"logins": logins, "begin_date": begin_date, "end_date": end_date}, overrides)
 
 
+def get_current_operators_for_project(partner_uuid: str, overrides: dict = None) -> list[dict]:
+    """Current operator statuses for a project.
+    Finds active logins via queued_calls_ms (last 7 days) then gets latest
+    status from status_changes (last 48 h) — fast, no full-table scan.
+    """
+    query = """
+    WITH project_logins AS (
+        SELECT DISTINCT COALESCE(cl.dst_id, cl.dst_abonent) AS login
+        FROM queued_calls_ms que
+        JOIN mv_incoming_call_project icp ON icp.uuid = que.project_id
+        LEFT JOIN call_legs cl ON cl.session_id = que.session_id
+                               AND cl.leg_id = que.next_leg_id
+        WHERE icp.partneruuid = %(partner_uuid)s
+          AND icp.removed = false
+          AND que.final_stage = 'operator'
+          AND que.enqueued_time >= NOW() - INTERVAL '7 days'
+          AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
+    ),
+    latest_status AS (
+        SELECT DISTINCT ON (sc.login)
+            sc.login,
+            sc.status,
+            sc.entered
+        FROM status_changes sc
+        JOIN project_logins pl ON pl.login = sc.login
+        WHERE sc.entered >= NOW() - INTERVAL '48 hours'
+        ORDER BY sc.login, sc.entered DESC
+    )
+    SELECT
+        ls.login         AS login,
+        ls.status        AS status,
+        ls.entered       AS entered,
+        em.title         AS employee_name
+    FROM latest_status ls
+    LEFT JOIN mv_employee em ON em.login = ls.login
+    ORDER BY ls.status, ls.entered DESC
+    """
+    return _execute(query, {"partner_uuid": partner_uuid}, overrides)
+
+
 def get_current_online_operators(logins: list, overrides: dict = None) -> list[dict]:
-    """Операторы с последним статусом != 'offline' (сейчас на линии/паузе)."""
+    """Latest operator status, filtered by login list and last 48 h."""
     if not logins:
         return []
     query = """
     SELECT DISTINCT ON (login)
         login,
         status,
-        entered AS since
+        entered
     FROM status_changes
     WHERE login = ANY(%(logins)s)
+      AND entered >= NOW() - INTERVAL '48 hours'
     ORDER BY login, entered DESC
     """
     return _execute(query, {"logins": logins}, overrides)

@@ -215,11 +215,11 @@ export default function OperatorLoadPage() {
                       {row.total_talk_sec ? `${Math.round(row.total_talk_sec / 60)} мин` : '—'}
                     </td>
                     <td className="px-4 py-3">
-                      {(row as any).idle_sec != null ? (
-                        <span className={`font-medium ${(row as any).idle_sec / 60 > 60 ? 'text-amber-600' : 'text-slate-600'}`}>
-                          {Math.round((row as any).idle_sec / 60)} мин
+                      {row.idle_sec != null && row.idle_sec > 0 ? (
+                        <span className={`font-medium ${row.idle_sec / 60 > 60 ? 'text-amber-600' : 'text-slate-600'}`}>
+                          {Math.round(row.idle_sec / 60)} мин
                         </span>
-                      ) : '—'}
+                      ) : <span className="text-slate-300">—</span>}
                     </td>
                     <td className="px-4 py-3 text-slate-600">{row.avg_answer_sec ?? '—'}</td>
                     <td className="px-4 py-3">
