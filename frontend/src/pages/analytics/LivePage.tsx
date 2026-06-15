@@ -79,8 +79,19 @@ const OFFLINE_STATUSES = new Set([
   'offline', 'logged_out', 'signedoff', 'loggedoff', 'disconnected',
 ])
 
-function statusLabel(s: string) { return STATUS_LABEL[s.toLowerCase()] ?? s }
-function statusColor(s: string) { return STATUS_COLOR[s.toLowerCase()] ?? 'bg-slate-100 text-slate-500' }
+// Custom* statuses in Naumen CC are always operator-defined pauses (breaks), never work statuses.
+function statusLabel(s: string) {
+  const k = s.toLowerCase()
+  if (STATUS_LABEL[k]) return STATUS_LABEL[k]
+  if (k.startsWith('custom')) return `Перерыв (${s})`
+  return s
+}
+function statusColor(s: string) {
+  const k = s.toLowerCase()
+  if (STATUS_COLOR[k]) return STATUS_COLOR[k]
+  if (k.startsWith('custom')) return 'bg-amber-100 text-amber-700'
+  return 'bg-slate-100 text-slate-500'
+}
 function isOnline(s: string) { return WORK_STATUSES.has(s.toLowerCase()) }
 function isPause(s: string) { const k = s.toLowerCase(); return !WORK_STATUSES.has(k) && !OFFLINE_STATUSES.has(k) }
 function isOffline(s: string) { return OFFLINE_STATUSES.has(s.toLowerCase()) }
