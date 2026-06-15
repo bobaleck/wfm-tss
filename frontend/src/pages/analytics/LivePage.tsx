@@ -5,9 +5,10 @@ import api from '@/api/client'
 import PageHeader from '@/components/common/PageHeader'
 import { PageSpinner } from '@/components/ui/Spinner'
 import EmptyState from '@/components/common/EmptyState'
-import { AlertCircle, Radio, RefreshCw, Users, AlertTriangle } from 'lucide-react'
+import { AlertCircle, Radio, RefreshCw, Users } from 'lucide-react'
 import { format } from 'date-fns'
 import { requiredAgents } from '@/utils/erlang'
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 
 interface CurrentOperator {
   login: string
@@ -17,6 +18,8 @@ interface CurrentOperator {
 }
 
 const REFRESH_MS = 5 * 60 * 1000
+const WINDOW_H = 24   // show operators whose last status is within this window
+const STALE_ONLINE_H = 12 // if online status is older than this, treat as "left"
 
 const STATUS_LABEL: Record<string, string> = {
   normal: 'В линии',
@@ -30,10 +33,17 @@ const STATUS_LABEL: Record<string, string> = {
   break: 'Перерыв',
   lunch: 'Обед',
   training: 'Обучение',
+  away: 'Отсутствует',
+  notavailable: 'Недоступен',
+  not_available: 'Недоступен',
+  wrapup: 'После звонка',
+  acw: 'После звонка (ACW)',
+  busy: 'Занят',
   offline: 'Офлайн',
   logged_out: 'Вышел',
   signedoff: 'Вышел',
   loggedoff: 'Вышел',
+  disconnected: 'Отключён',
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -48,33 +58,35 @@ const STATUS_COLOR: Record<string, string> = {
   break: 'bg-yellow-100 text-yellow-700',
   lunch: 'bg-orange-100 text-orange-700',
   training: 'bg-purple-100 text-purple-700',
+  away: 'bg-amber-100 text-amber-700',
+  notavailable: 'bg-red-100 text-red-600',
+  not_available: 'bg-red-100 text-red-600',
+  wrapup: 'bg-sky-100 text-sky-700',
+  acw: 'bg-sky-100 text-sky-700',
+  busy: 'bg-rose-100 text-rose-700',
   offline: 'bg-slate-100 text-slate-500',
   logged_out: 'bg-slate-100 text-slate-400',
   signedoff: 'bg-slate-100 text-slate-400',
   loggedoff: 'bg-slate-100 text-slate-400',
+  disconnected: 'bg-slate-100 text-slate-400',
 }
+
+const WORK_STATUSES = new Set([
+  'normal', 'ready', 'available', 'ringing', 'speaking', 'inservice',
+  'ringing#voice', 'speaking#voice',
+])
+const OFFLINE_STATUSES = new Set([
+  'offline', 'logged_out', 'signedoff', 'loggedoff', 'disconnected',
+])
 
 function statusLabel(s: string) { return STATUS_LABEL[s.toLowerCase()] ?? s }
-function statusColor(s: string) { return STATUS_COLOR[s.toLowerCase()] ?? 'bg-slate-100 text-slate-400' }
+function statusColor(s: string) { return STATUS_COLOR[s.toLowerCase()] ?? 'bg-slate-100 text-slate-500' }
+function isOnline(s: string) { return WORK_STATUSES.has(s.toLowerCase()) }
+function isPause(s: string) { const k = s.toLowerCase(); return !WORK_STATUSES.has(k) && !OFFLINE_STATUSES.has(k) }
+function isOffline(s: string) { return OFFLINE_STATUSES.has(s.toLowerCase()) }
 
-function isOnline(s: string) {
-  const k = s.toLowerCase()
-  return ['normal', 'ready', 'available', 'ringing', 'speaking', 'inservice',
-    'ringing#voice', 'speaking#voice'].includes(k)
-}
-function isPause(s: string) {
-  const k = s.toLowerCase()
-  return !isOnline(k) && !['offline', 'logged_out', 'signedoff', 'loggedoff'].includes(k)
-}
-function isOffline(s: string) {
-  const k = s.toLowerCase()
-  return ['offline', 'logged_out', 'signedoff', 'loggedoff'].includes(k)
-}
-
-// Operators with status older than STALE_H hours are treated as "left" even if status=online
-const STALE_H = 12
-function isStale(entered: string) {
-  return Date.now() - new Date(entered).getTime() > STALE_H * 3600 * 1000
+function withinWindow(entered: string, hours: number) {
+  return Date.now() - new Date(entered).getTime() <= hours * 3600 * 1000
 }
 
 function minutesAgo(dt: string) {
@@ -88,7 +100,7 @@ function minutesAgo(dt: string) {
 
 function OpRow({ op }: { op: CurrentOperator }) {
   return (
-    <div className="flex items-center justify-between px-4 py-3 group">
+    <div className="flex items-center justify-between px-4 py-3">
       <div className="min-w-0">
         <p className="text-sm font-medium text-slate-800 truncate">{op.employee_name || op.login}</p>
         <p className="text-xs text-slate-400">{op.login} · {minutesAgo(op.entered)}</p>
@@ -101,9 +113,9 @@ function OpRow({ op }: { op: CurrentOperator }) {
 }
 
 function Section({
-  dot, dotColor, title, count, children, empty,
+  dotColor, title, count, children, empty,
 }: {
-  dot: string; dotColor: string; title: string; count: number; children: React.ReactNode; empty: string
+  dotColor: string; title: string; count: number; children: React.ReactNode; empty: string
 }) {
   return (
     <div className="card overflow-hidden">
@@ -117,6 +129,20 @@ function Section({
         <div className="divide-y divide-slate-50 max-h-80 overflow-y-auto">{children}</div>
       )}
     </div>
+  )
+}
+
+const DONUT_COLORS = ['#16a34a', '#f59e0b', '#94a3b8']
+const RADIAN = Math.PI / 180
+function DonutLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) {
+  if (percent < 0.05) return null
+  const r = innerRadius + (outerRadius - innerRadius) * 0.5
+  const x = cx + r * Math.cos(-midAngle * RADIAN)
+  const y = cy + r * Math.sin(-midAngle * RADIAN)
+  return (
+    <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={600}>
+      {Math.round(percent * 100)}%
+    </text>
   )
 }
 
@@ -135,7 +161,7 @@ export default function LivePage() {
         setLastRefreshed(new Date())
         return r.data.data as CurrentOperator[]
       }),
-    enabled: !!activeProject,
+    enabled: !!activeProject?.customer_uuid,
     refetchInterval: REFRESH_MS,
     staleTime: REFRESH_MS,
   })
@@ -151,8 +177,8 @@ export default function LivePage() {
           interval: 'hour',
         },
       }).then((r) => r.data.data),
-    enabled: !!activeProject,
-    staleTime: 30 * 60 * 1000,
+    enabled: !!activeProject?.customer_uuid,
+    staleTime: 5 * 60 * 1000,
   })
 
   const forecastedNow = useMemo(() => {
@@ -171,29 +197,38 @@ export default function LivePage() {
       ? byHour[h].ahts.reduce((a, b) => a + b, 0) / byHour[h].ahts.length
       : 180
     const min = requiredAgents(avgCalls, avgAHT, 80, 20)
-    // Apply 30% shrinkage
     return Math.max(1, Math.round(min / (1 - 0.30)))
   }, [staffingForecast, currentHour])
 
-  // Categorize operators
-  const onlineOps = useMemo(
-    () => (currentOps || []).filter((o) => isOnline(o.status) && !isStale(o.entered)),
+  // All operators with status within 24h window
+  const recentOps = useMemo(
+    () => (currentOps || []).filter((o) => withinWindow(o.entered, WINDOW_H)),
     [currentOps],
+  )
+
+  const onlineOps = useMemo(
+    () => recentOps.filter((o) => isOnline(o.status) && withinWindow(o.entered, STALE_ONLINE_H)),
+    [recentOps],
   )
   const pauseOps = useMemo(
-    () => (currentOps || []).filter((o) => isPause(o.status) && !isStale(o.entered)),
-    [currentOps],
+    () => recentOps.filter((o) => isPause(o.status)),
+    [recentOps],
   )
-  // Recent offline = explicit offline status OR stale online/pause (logged off without recording it)
-  const recentOfflineOps = useMemo(
-    () => (currentOps || []).filter(
-      (o) => isOffline(o.status) || (isOnline(o.status) && isStale(o.entered)) || (isPause(o.status) && isStale(o.entered)),
+  const offlineOps = useMemo(
+    () => recentOps.filter(
+      (o) => isOffline(o.status) || (isOnline(o.status) && !withinWindow(o.entered, STALE_ONLINE_H)),
     ),
-    [currentOps],
+    [recentOps],
   )
 
   const actualOnlineCount = onlineOps.length
   const isUnderstaffed = forecastedNow != null && actualOnlineCount < forecastedNow
+
+  const donutData = [
+    { name: 'В линии', value: onlineOps.length },
+    { name: 'На паузе', value: pauseOps.length },
+    { name: 'Вышли', value: offlineOps.length },
+  ].filter((d) => d.value > 0)
 
   if (!activeProject) return (
     <div>
@@ -216,7 +251,7 @@ export default function LivePage() {
           <span>Обновление каждые 5 минут · Последнее: {format(lastRefreshed, 'HH:mm:ss')}</span>
         </div>
         <button
-          onClick={() => refetchOps()}
+          onClick={() => { setLastRefreshed(new Date()); refetchOps() }}
           className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white transition-colors"
         >
           <RefreshCw size={13} /> Обновить сейчас
@@ -230,7 +265,7 @@ export default function LivePage() {
             Требуется на {String(currentHour).padStart(2, '0')}:00
           </p>
           <p className="text-3xl font-bold text-slate-900">{forecastedNow ?? '—'}</p>
-          <p className="text-xs text-slate-500 mt-1">по Erlang C (SL 80% / 20с, shrinkage 30%)</p>
+          <p className="text-xs text-slate-500 mt-1">Erlang C · SL 80%/20с · shrinkage 30%</p>
         </div>
 
         <div className={`card p-5 ${isUnderstaffed ? 'border-red-400 bg-red-100' : 'border-green-300 bg-green-100'}`}>
@@ -241,28 +276,23 @@ export default function LivePage() {
           <p className={`text-3xl font-bold ${isUnderstaffed ? 'text-red-700' : 'text-green-700'}`}>{actualOnlineCount}</p>
           {forecastedNow != null && (
             <p className={`text-xs font-medium mt-1 ${isUnderstaffed ? 'text-red-600' : 'text-green-600'}`}>
-              {isUnderstaffed
-                ? `⚠ Нехватка: ${forecastedNow - actualOnlineCount} чел.`
-                : '✓ Норма'}
+              {isUnderstaffed ? `⚠ Нехватка: ${forecastedNow - actualOnlineCount} чел.` : '✓ Норма'}
             </p>
           )}
         </div>
 
         <div className="card p-5 border-slate-200">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">На паузе</p>
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">На паузе / Вышли</p>
           <p className="text-3xl font-bold text-slate-900">{pauseOps.length}</p>
-          <p className="text-xs text-slate-500 mt-1">
-            Вышли за 24ч: {recentOfflineOps.length}
-          </p>
+          <p className="text-xs text-slate-500 mt-1">Вышли за 24ч: {offlineOps.length}</p>
         </div>
       </div>
 
-      {loadingOps ? <PageSpinner /> : !currentOps?.length ? (
-        <EmptyState title="Нет данных об операторах" description="Проверьте настройки интеграции с Naumen" />
+      {loadingOps ? <PageSpinner /> : !recentOps.length ? (
+        <EmptyState title="Нет данных за последние 24 часа" description="Проверьте настройки интеграции с Naumen" />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Section
-            dot="w-2 h-2 bg-green-500 animate-pulse"
             dotColor="bg-green-500 animate-pulse"
             title="В линии / активны"
             count={onlineOps.length}
@@ -272,7 +302,6 @@ export default function LivePage() {
           </Section>
 
           <Section
-            dot="w-2 h-2 bg-yellow-400"
             dotColor="bg-yellow-400"
             title="На паузе"
             count={pauseOps.length}
@@ -282,18 +311,48 @@ export default function LivePage() {
           </Section>
 
           <Section
-            dot="w-2 h-2 bg-slate-400"
             dotColor="bg-slate-400"
             title="Вышли за 24 часа"
-            count={recentOfflineOps.length}
+            count={offlineOps.length}
             empty="Нет офлайн операторов"
           >
-            {recentOfflineOps.map((op) => <OpRow key={op.login} op={op} />)}
+            {offlineOps.map((op) => <OpRow key={op.login} op={op} />)}
           </Section>
 
-          {/* Placeholder for layout symmetry if needed */}
-          <div className="card p-5 border-dashed border-slate-200 hidden lg:flex items-center justify-center text-slate-300 text-sm">
-            Данные обновляются автоматически каждые 5 минут
+          {/* Activity donut chart */}
+          <div className="card p-5">
+            <h2 className="text-sm font-semibold text-slate-800 mb-1">Активность операторов</h2>
+            <p className="text-xs text-slate-400 mb-3">За последние 24 часа · всего {recentOps.length} чел.</p>
+            {donutData.length === 0 ? (
+              <div className="flex items-center justify-center h-40 text-slate-300 text-sm">Нет данных</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie
+                    data={donutData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={55}
+                    outerRadius={85}
+                    dataKey="value"
+                    labelLine={false}
+                    label={DonutLabel}
+                  >
+                    {donutData.map((_, index) => (
+                      <Cell key={index} fill={DONUT_COLORS[index % DONUT_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(val, name) => [`${val} чел.`, name]} />
+                  <Legend
+                    formatter={(val, entry: any) => (
+                      <span className="text-xs text-slate-700">
+                        {val} — {entry.payload?.value} чел.
+                      </span>
+                    )}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       )}

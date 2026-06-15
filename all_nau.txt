@@ -1,0 +1,162 @@
+WFM Телесейлз-Сервис — Все запросы к Naumen PostgreSQL (nccrep)
+================================================================
+Источник кода: backend/app/services/naumen_db.py
+Jupyter-ноутбук: all_nau.ipynb
+База данных: nccrep (read-only, psycopg2)
+
+════════════════════════════════════════════════════════════════════
+ №   Функция                              Используется где
+════════════════════════════════════════════════════════════════════
+
+1.  get_projects(overrides)
+    Таблицы: mv_incoming_call_project, mv_outcoming_call_project, mv_partner
+    Назначение: Список активных партнёров (проектов) с количеством очередей.
+    Используется: ProjectsPage, селектор проекта в шапке.
+    Эндпоинт: GET /api/v1/projects
+
+2.  get_queues(partner_uuid, overrides)
+    Таблицы: mv_incoming_call_project
+    Назначение: Входящие очереди конкретного партнёра (title, calllimit, SL).
+    Используется: QueuesPage, QueueFilterDropdown, SLA-настройки.
+    Эндпоинт: GET /api/v1/analytics/queues?partner_uuid=...
+
+3.  get_workload(partner_uuid, begin, end, interval, overrides)
+    Таблицы: queued_calls_ms, mv_incoming_call_project, call_legs
+    Назначение: Нагрузка по периодам (total, handled, lost, avg_talk_sec, sl_percent).
+               interval='hour' → по часам, interval='day' → по дням.
+    Используется: WorkloadPage, QueuesPage, StaffingPage, LivePage (прогноз).
+    Эндпоинт: GET /api/v1/analytics/workload?partner_uuid=...&begin=...&end=...&interval=...
+
+4.  get_operator_load(partner_uuid, begin, end, overrides)
+    Таблицы: queued_calls_ms, mv_incoming_call_project, call_legs,
+             status_changes, mv_employee
+    Назначение: Нагрузка по операторам — handled_calls, avg_talk_sec,
+               total_talk_sec, avg_answer_sec, sl_percent, idle_sec (простой).
+    Используется: OperatorLoadPage (таблица + топ-10 чарт).
+    Эндпоинт: GET /api/v1/analytics/operator-load?partner_uuid=...&begin=...&end=...
+
+5.  get_status_summary(partner_uuid, begin, end, overrides)
+    Таблицы: queued_calls_ms, mv_incoming_call_project, call_legs, status_changes
+    Назначение: Суммарное время по каждому статусу для каждого оператора проекта.
+               Позволяет увидеть все статусы, которые реально используются в Naumen.
+    Используется: ShiftsPage (детализация по статусам), аналитика.
+    Эндпоинт: GET /api/v1/analytics/status-summary
+
+6.  get_naumen_employees(partner_uuid, begin, end, overrides)
+    Таблицы: queued_calls_ms, mv_incoming_call_project, call_legs, mv_employee
+    Назначение: Сотрудники, обработавшие хотя бы один звонок в периоде.
+               Возвращает uuid, login, employee_name, position, email.
+    Используется: Внутри sync_employees_for_partner.
+
+7.  sync_employees_for_partner(partner_uuid, overrides)
+    Вызывает: get_naumen_employees(partner_uuid, today-365, today)
+    Назначение: Получение полного списка операторов за последний год для синхронизации.
+    Используется: POST /api/v1/employees/sync-naumen
+
+8.  get_active_logins_since(partner_uuid, cutoff_date, overrides)
+    Таблицы: queued_calls_ms, mv_incoming_call_project, call_legs
+    Назначение: Множество (set) логинов операторов, активных с указанной даты.
+               Используется для определения статуса занятости при синхронизации:
+               • активен за 30 дней → employment_status='active'
+               • нет за 180 дней → удалить из WFM
+    Используется: sync_from_naumen в employees.py
+
+9.  get_operator_sessions(logins, begin, end, overrides)
+    Таблицы: status_changes
+    Назначение: История сессий операторов по дням — first_login, last_logout,
+               total_sec, normal_sec, non_normal_sec, shift_sec, break_count.
+               Данные рассчитываются через LEAD() от реальных событий (не из duration в VIEW).
+    Используется: ShiftsPage (карточки смен), IntradayPage.
+    Эндпоинт: GET /api/v1/analytics/operator-sessions
+
+10. get_operator_timeline(login, work_date, overrides)
+    Таблицы: status_changes
+    Назначение: Все события статуса одного оператора за один день с длительностью.
+               Используется для визуальной «ленты» событий (хронология дня).
+    Используется: IntradayPage (детализация по оператору).
+    Эндпоинт: GET /api/v1/analytics/operator-timeline
+
+11. get_actual_operators_by_hour(logins, begin, end, overrides)
+    Таблицы: status_changes
+    Назначение: Среднее фактическое число операторов (не-offline) по часам суток.
+               Результат — 24 строки (hour_num 0–23, avg_operators).
+    Используется: StaffingPage (синяя пунктирная линия «факт. операторов»).
+    Эндпоинт: GET /api/v1/analytics/actual-operators
+
+12. get_current_operators_for_project(partner_uuid, overrides)
+    Таблицы: queued_calls_ms (7 дней) → список login,
+             status_changes (48 часов) → последний статус,
+             mv_employee → имя
+    Назначение: Текущие статусы всех операторов проекта для онлайн-мониторинга.
+               Возвращает login, status, entered, employee_name.
+    Алгоритм:
+       1. queued_calls_ms (7д) → операторы, работавшие с проектом
+       2. status_changes (48ч) → DISTINCT ON (login) → последний статус
+    Используется: LivePage (В линии / На паузе / Вышли).
+    Эндпоинт: GET /api/v1/analytics/current-operators?partner_uuid=...
+
+13. get_current_online_operators(logins, overrides)
+    Таблицы: status_changes (48 часов)
+    Назначение: Последний статус для переданного списка логинов.
+               Аналог #12, но принимает явный список логинов вместо partner_uuid.
+    Используется: При необходимости точечной проверки конкретных операторов.
+
+14. get_operator_day_seconds(login, work_date, overrides)
+    Таблицы: status_changes
+    Назначение: Суммарное время в секундах, которое оператор провёл в любых
+               статусах за указанную дату.
+    Используется: ShiftsPage, расчёт итогового времени смены.
+    Эндпоинт: GET /api/v1/analytics/operator-day-seconds
+
+15. test_connection(overrides)
+    SQL: SELECT 1 AS ok
+    Назначение: Проверка соединения с nccrep.
+    Используется: SettingsPage (интеграции).
+    Эндпоинт: POST /api/v1/integration-settings/test
+
+════════════════════════════════════════════════════════════════════
+ СТАТУСЫ NAUMEN (status_changes.status)
+════════════════════════════════════════════════════════════════════
+
+В линии (рабочие):
+  normal          — В линии (основной рабочий статус)
+  ready           — Готов
+  available       — Доступен
+  ringing         — Вызов входящий
+  ringing#voice   — Вызов (голос)
+  speaking        — Разговор
+  speaking#voice  — Разговор (голос)
+  inservice       — Обслуживание
+
+На паузе (перерывы/недоступность):
+  break           — Перерыв
+  lunch           — Обед
+  training        — Обучение
+  away            — Отсутствует
+  notavailable    — Недоступен
+  not_available   — Недоступен
+  wrapup          — После звонка
+  acw             — После звонка (ACW, After Call Work)
+  busy            — Занят
+
+Офлайн (вышли):
+  offline         — Офлайн
+  logged_out      — Вышел
+  signedoff       — Вышел
+  loggedoff       — Вышел
+  disconnected    — Отключён
+
+Используйте запрос #5 (get_status_summary) чтобы увидеть
+ВСЕ реальные статусы вашей инсталляции Naumen.
+
+════════════════════════════════════════════════════════════════════
+ КЛЮЧЕВЫЕ ТАБЛИЦЫ nccrep
+════════════════════════════════════════════════════════════════════
+
+mv_incoming_call_project  — Входящие проекты/очереди
+mv_outcoming_call_project — Исходящие проекты
+mv_partner                — Партнёры (клиенты)
+mv_employee               — Операторы (login, title, post, email)
+queued_calls_ms           — Звонки в очереди (enqueued_time, final_stage, session_id)
+call_legs                 — Плечи звонков (dst_id/dst_abonent = логин оператора)
+status_changes            — События смены статуса (login, status, entered, duration)

@@ -48,8 +48,14 @@ function EmployeeForm({ employee, onClose }: { employee?: Employee | null; onClo
   })
 
   const mutation = useMutation({
-    mutationFn: (data: any) =>
-      employee ? api.put(`/employees/${employee.id}`, data) : api.post('/employees', data),
+    mutationFn: (data: any) => {
+      if (employee) {
+        // Never change project_uuid when editing existing employee
+        const { project_uuid, ...rest } = data
+        return api.put(`/employees/${employee.id}`, rest)
+      }
+      return api.post('/employees', data)
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees'] }); onClose() },
     onError: (e: any) => setError(e.response?.data?.detail || 'Ошибка'),
   })
@@ -226,17 +232,20 @@ function EmployeeRow({
 }) {
   const qc = useQueryClient()
   const [addSkillId, setAddSkillId] = useState<number | ''>('')
+  const [skillError, setSkillError] = useState<string | null>(null)
 
   const addSkillMutation = useMutation({
     mutationFn: (skillId: number) =>
       api.put(`/employees/${emp.id}`, { skill_ids: [...emp.skills.map((s) => s.skill_id), skillId] }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees'] }); setAddSkillId('') },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees'] }); setAddSkillId(''); setSkillError(null) },
+    onError: (e: any) => setSkillError(e.response?.data?.detail || 'Ошибка при добавлении навыка'),
   })
 
   const removeSkillMutation = useMutation({
     mutationFn: (skillId: number) =>
       api.put(`/employees/${emp.id}`, { skill_ids: emp.skills.filter((s) => s.skill_id !== skillId).map((s) => s.skill_id) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['employees'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees'] }); setSkillError(null) },
+    onError: (e: any) => setSkillError(e.response?.data?.detail || 'Ошибка при удалении навыка'),
   })
 
   const availableSkills = allSkills.filter((s) => !emp.skills.some((es) => es.skill_id === s.id))
@@ -270,29 +279,35 @@ function EmployeeRow({
       {expanded && (
         <tr className="border-b border-slate-100">
           <td colSpan={8} className="px-6 py-4 bg-slate-50">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+            <div className="flex flex-wrap gap-6">
               {/* Контактная информация */}
-              <div>
+              <div className="min-w-[180px] flex-1">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Контакты</p>
-                <div className="space-y-1 text-sm">
-                  {[['Email', emp.email], ['Телефон', emp.phone], ['Логин Naumen', emp.naumen_login]].map(([label, val]) => (
-                    <div key={label} className="flex gap-2">
-                      <span className="text-slate-400 w-28 flex-shrink-0">{label}:</span>
-                      <span className="text-slate-700 font-mono text-xs">{val || '—'}</span>
+                <div className="space-y-1.5 text-sm">
+                  {[['Email', emp.email], ['Телефон', emp.phone], ['Naumen', emp.naumen_login]].map(([label, val]) => (
+                    <div key={label} className="flex gap-2 items-start">
+                      <span className="text-slate-400 text-xs w-16 flex-shrink-0 mt-0.5">{label}:</span>
+                      <span className="text-slate-700 font-mono text-xs break-all">{val || '—'}</span>
                     </div>
                   ))}
                 </div>
               </div>
 
               {/* Навыки */}
-              <div>
+              <div className="min-w-[220px] flex-[2]">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Навыки</p>
+                {skillError && (
+                  <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1 mb-2">{skillError}</p>
+                )}
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {emp.skills.length === 0 && <span className="text-xs text-slate-400">Навыки не назначены</span>}
                   {emp.skills.map((s) => (
                     <span key={s.skill_id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs">
                       {s.skill_name}
-                      <button onClick={() => removeSkillMutation.mutate(s.skill_id)} className="hover:text-red-600 ml-0.5">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeSkillMutation.mutate(s.skill_id) }}
+                        className="hover:text-red-600 ml-0.5"
+                      >
                         <X size={10} />
                       </button>
                     </span>
@@ -303,18 +318,19 @@ function EmployeeRow({
                     <select
                       className="input text-xs py-1 h-7 flex-1"
                       value={addSkillId}
-                      onChange={(e) => setAddSkillId(e.target.value ? +e.target.value : '')}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => { e.stopPropagation(); setAddSkillId(e.target.value ? +e.target.value : '') }}
                     >
                       <option value="">+ добавить навык...</option>
                       {availableSkills.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                     {addSkillId !== '' && (
                       <button
-                        onClick={() => addSkillMutation.mutate(+addSkillId)}
+                        onClick={(e) => { e.stopPropagation(); addSkillMutation.mutate(+addSkillId) }}
                         disabled={addSkillMutation.isPending}
-                        className="px-2 py-1 bg-purple-600 text-white text-xs rounded-lg hover:bg-purple-700"
+                        className="px-2 py-1 bg-purple-600 text-white text-xs rounded-lg hover:bg-purple-700 disabled:opacity-50"
                       >
-                        ОК
+                        {addSkillMutation.isPending ? '...' : 'ОК'}
                       </button>
                     )}
                   </div>
@@ -322,13 +338,19 @@ function EmployeeRow({
               </div>
 
               {/* Быстрые действия */}
-              <div>
+              <div className="min-w-[160px]">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Действия</p>
                 <div className="flex flex-col gap-2">
-                  <button onClick={() => onShift(emp)} className="flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-medium transition-colors">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onShift(emp) }}
+                    className="flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-medium transition-colors"
+                  >
                     <Clock4 size={13} /> Поставить смену
                   </button>
-                  <button onClick={() => onEdit(emp)} className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onEdit(emp) }}
+                    className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors"
+                  >
                     <Pencil size={13} /> Редактировать карточку
                   </button>
                 </div>

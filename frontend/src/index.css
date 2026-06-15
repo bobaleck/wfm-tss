@@ -9,6 +9,9 @@
   body {
     @apply bg-slate-50 text-slate-900 font-sans antialiased;
   }
+  select, input, textarea {
+    outline: none !important;
+  }
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;

@@ -30,6 +30,8 @@ export default function StaffingPage() {
   const [shrinkage, setShrinkage] = useState(30)
   const [dayFilter, setDayFilter] = useState<DayFilter>('all')
   const [selectedQueues, setSelectedQueues] = useState<Set<string>>(new Set())
+  const [fromHour, setFromHour] = useState(0)
+  const [toHour, setToHour] = useState(23)
 
   // Параметры прогноза
   const [projWeeks, setProjWeeks] = useState(4)
@@ -105,9 +107,10 @@ export default function StaffingPage() {
         needed,
         withShrinkage,
         actual: actualByHour[h] ?? null,
+        _h: h,
       }
-    }).filter((r) => r.avgCalls > 0 || r.actual != null)
-  }, [data, targetSl, targetSec, shrinkage, dayFilter, actualByHour, selectedQueues])
+    }).filter((r) => (r.avgCalls > 0 || r.actual != null) && r._h >= fromHour && r._h <= toHour)
+  }, [data, targetSl, targetSec, shrinkage, dayFilter, actualByHour, selectedQueues, fromHour, toHour])
 
   // Прогноз на N недель вперёд
   const projectionData = useMemo(() => {
@@ -191,6 +194,30 @@ export default function StaffingPage() {
                   {l}
                 </button>
               ))}
+            </div>
+          </div>
+          <div>
+            <label className="label">Часы (с — по)</label>
+            <div className="flex items-center gap-1.5">
+              <select
+                className="input w-20"
+                value={fromHour}
+                onChange={(e) => setFromHour(+e.target.value)}
+              >
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                ))}
+              </select>
+              <span className="text-slate-400 text-sm">—</span>
+              <select
+                className="input w-20"
+                value={toHour}
+                onChange={(e) => setToHour(+e.target.value)}
+              >
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                ))}
+              </select>
             </div>
           </div>
           {allQueues.length > 1 && (
