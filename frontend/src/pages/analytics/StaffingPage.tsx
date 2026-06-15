@@ -140,8 +140,9 @@ export default function StaffingPage() {
   const avgNeeded = staffingData.length
     ? Math.round(staffingData.reduce((s, r) => s + r.withShrinkage, 0) / staffingData.length)
     : 0
-  const avgActual = actualOpsData?.length
-    ? Math.round(actualOpsData.reduce((s, r) => s + r.avg_operators, 0) / actualOpsData.length)
+  const avgActualFiltered = staffingData.filter((r) => r.actual != null)
+  const avgActual = avgActualFiltered.length
+    ? Math.round(avgActualFiltered.reduce((s, r) => s + (r.actual || 0), 0) / avgActualFiltered.length)
     : null
 
   if (!activeProject) return (

@@ -37,7 +37,8 @@ const STATUS_LABEL: Record<string, string> = {
   notavailable: 'Недоступен',
   not_available: 'Недоступен',
   wrapup: 'После звонка',
-  acw: 'После звонка (ACW)',
+  'wrapup#voice': 'После звонка',
+  acw: 'После звонка',
   busy: 'Занят',
   offline: 'Офлайн',
   logged_out: 'Вышел',
@@ -62,6 +63,7 @@ const STATUS_COLOR: Record<string, string> = {
   notavailable: 'bg-red-100 text-red-600',
   not_available: 'bg-red-100 text-red-600',
   wrapup: 'bg-sky-100 text-sky-700',
+  'wrapup#voice': 'bg-sky-100 text-sky-700',
   acw: 'bg-sky-100 text-sky-700',
   busy: 'bg-rose-100 text-rose-700',
   offline: 'bg-slate-100 text-slate-500',
@@ -74,9 +76,11 @@ const STATUS_COLOR: Record<string, string> = {
 const WORK_STATUSES = new Set([
   'normal', 'ready', 'available', 'ringing', 'speaking', 'inservice',
   'ringing#voice', 'speaking#voice',
+  'wrapup', 'wrapup#voice', 'acw',
 ])
 const OFFLINE_STATUSES = new Set([
   'offline', 'logged_out', 'signedoff', 'loggedoff', 'disconnected',
+  'away', 'notavailable', 'not_available',
 ])
 
 // Custom* statuses in Naumen CC are always operator-defined pauses (breaks), never work statuses.
@@ -109,7 +113,7 @@ function minutesAgo(dt: string) {
   return m > 0 ? `${h}ч ${m}м назад` : `${h}ч назад`
 }
 
-function OpRow({ op }: { op: CurrentOperator }) {
+function OpRow({ op, labelFn = statusLabel }: { op: CurrentOperator; labelFn?: (s: string) => string }) {
   return (
     <div className="flex items-center justify-between px-4 py-3">
       <div className="min-w-0">
@@ -117,7 +121,7 @@ function OpRow({ op }: { op: CurrentOperator }) {
         <p className="text-xs text-slate-400">{op.login} · {minutesAgo(op.entered)}</p>
       </div>
       <span className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ml-2 ${statusColor(op.status)}`}>
-        {statusLabel(op.status)}
+        {labelFn(op.status)}
       </span>
     </div>
   )
@@ -162,6 +166,39 @@ export default function LivePage() {
   const today = format(new Date(), 'yyyy-MM-dd')
   const currentHour = new Date().getHours()
   const [lastRefreshed, setLastRefreshed] = useState(new Date())
+
+  const { data: statusConfigs } = useQuery({
+    queryKey: ['status-configs'],
+    queryFn: () => api.get('/status-configs').then((r) => r.data as Array<{ status_name: string; classification: string; label: string | null }>),
+    staleTime: 10 * 60 * 1000,
+  })
+
+  const customClassMap = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const c of statusConfigs || []) m[c.status_name.toLowerCase()] = c.classification
+    return m
+  }, [statusConfigs])
+
+  const customLabelMap = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const c of statusConfigs || []) if (c.label) m[c.status_name.toLowerCase()] = c.label
+    return m
+  }, [statusConfigs])
+
+  function classifyStatus(s: string): 'work' | 'pause' | 'offline' {
+    const k = s.toLowerCase()
+    if (WORK_STATUSES.has(k)) return 'work'
+    if (OFFLINE_STATUSES.has(k)) return 'offline'
+    if (customClassMap[k] === 'work') return 'work'
+    if (customClassMap[k] === 'offline') return 'offline'
+    return 'pause'
+  }
+
+  function statusLabelEx(s: string) {
+    const k = s.toLowerCase()
+    if (customLabelMap[k]) return customLabelMap[k]
+    return statusLabel(s)
+  }
 
   const { data: currentOps, isLoading: loadingOps, refetch: refetchOps } = useQuery({
     queryKey: ['current-operators', activeProject?.customer_uuid],
@@ -218,18 +255,18 @@ export default function LivePage() {
   )
 
   const onlineOps = useMemo(
-    () => recentOps.filter((o) => isOnline(o.status) && withinWindow(o.entered, STALE_ONLINE_H)),
-    [recentOps],
+    () => recentOps.filter((o) => classifyStatus(o.status) === 'work' && withinWindow(o.entered, STALE_ONLINE_H)),
+    [recentOps, customClassMap],
   )
   const pauseOps = useMemo(
-    () => recentOps.filter((o) => isPause(o.status)),
-    [recentOps],
+    () => recentOps.filter((o) => classifyStatus(o.status) === 'pause'),
+    [recentOps, customClassMap],
   )
   const offlineOps = useMemo(
     () => recentOps.filter(
-      (o) => isOffline(o.status) || (isOnline(o.status) && !withinWindow(o.entered, STALE_ONLINE_H)),
+      (o) => classifyStatus(o.status) === 'offline' || (classifyStatus(o.status) === 'work' && !withinWindow(o.entered, STALE_ONLINE_H)),
     ),
-    [recentOps],
+    [recentOps, customClassMap],
   )
 
   const actualOnlineCount = onlineOps.length
@@ -309,7 +346,7 @@ export default function LivePage() {
             count={onlineOps.length}
             empty="Нет активных операторов"
           >
-            {onlineOps.map((op) => <OpRow key={op.login} op={op} />)}
+            {onlineOps.map((op) => <OpRow key={op.login} op={op} labelFn={statusLabelEx} />)}
           </Section>
 
           <Section
@@ -318,7 +355,7 @@ export default function LivePage() {
             count={pauseOps.length}
             empty="Никто не на паузе"
           >
-            {pauseOps.map((op) => <OpRow key={op.login} op={op} />)}
+            {pauseOps.map((op) => <OpRow key={op.login} op={op} labelFn={statusLabelEx} />)}
           </Section>
 
           <Section
@@ -327,7 +364,7 @@ export default function LivePage() {
             count={offlineOps.length}
             empty="Нет офлайн операторов"
           >
-            {offlineOps.map((op) => <OpRow key={op.login} op={op} />)}
+            {offlineOps.map((op) => <OpRow key={op.login} op={op} labelFn={statusLabelEx} />)}
           </Section>
 
           {/* Activity donut chart */}

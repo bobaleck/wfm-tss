@@ -94,19 +94,25 @@ def sync_from_naumen(
 
     naumen_logins = {ne.get("login") for ne in naumen_employees if ne.get("login")}
 
-    # Активные за 30 дней (для статуса)
+    # Если из Naumen вернулся пустой список — что-то не так, прерываем синхронизацию
+    if not naumen_employees:
+        return {"ok": True, "added": 0, "fired_auto": 0, "deleted_stale": 0,
+                "total_from_naumen": 0, "active_in_30d": 0,
+                "warning": "Naumen вернул пустой список сотрудников. Синхронизация пропущена."}
+
+    # Активные за 30 дней (для статуса) — при ошибке ПРЕРЫВАЕМ, не маркируем всех уволенными
     try:
         cutoff_30 = (date.today() - timedelta(days=30)).isoformat()
         active_logins = naumen.get_active_logins_since(project_uuid, cutoff_30, overrides)
-    except Exception:
-        active_logins = set()
+    except Exception as e:
+        raise HTTPException(503, detail=f"Не удалось получить список активных операторов (30д): {e}")
 
-    # Активные за 180 дней (для удаления — те, кого нет в этом списке, удаляем)
+    # Активные за 180 дней (для удаления)
     try:
         cutoff_180 = (date.today() - timedelta(days=180)).isoformat()
         active_6mo = naumen.get_active_logins_since(project_uuid, cutoff_180, overrides)
-    except Exception:
-        active_6mo = set()
+    except Exception as e:
+        raise HTTPException(503, detail=f"Не удалось получить список активных операторов (180д): {e}")
 
     added = 0
     fired_auto = 0

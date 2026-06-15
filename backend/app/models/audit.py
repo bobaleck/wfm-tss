@@ -55,6 +55,17 @@ class QueueSetting(Base):
     answer_sec = Column(Integer, nullable=True)
 
 
+class StatusConfig(Base):
+    """Пользовательская классификация нестандартных статусов Naumen."""
+    __tablename__ = "status_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status_name = Column(String(100), unique=True, index=True, nullable=False)
+    classification = Column(String(20), nullable=False, default='pause')  # work | pause | offline
+    label = Column(String(100), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class UserProject(Base):
     """Maps users (project_manager / customer roles) to their allowed projects."""
     __tablename__ = "user_projects"

@@ -33,7 +33,6 @@ function EmployeeForm({ employee, onClose }: { employee?: Employee | null; onClo
     naumen_login: employee?.naumen_login ?? '',
     phone: employee?.phone ?? '',
     email: employee?.email ?? '',
-    is_active: employee?.is_active ?? true,
   })
   const [error, setError] = useState('')
 
@@ -126,17 +125,6 @@ function EmployeeForm({ employee, onClose }: { employee?: Employee | null; onClo
           <div>
             <label className="label">Логин Naumen</label>
             <input className="input font-mono" value={form.naumen_login} onChange={(e) => setForm({ ...form, naumen_login: e.target.value })} placeholder="ivanov_i" />
-          </div>
-          <div className="flex items-end pb-0.5">
-            <label className="flex items-center gap-2.5 cursor-pointer">
-              <div
-                onClick={() => setForm({ ...form, is_active: !form.is_active })}
-                className={`w-10 h-5 rounded-full transition-colors cursor-pointer flex-shrink-0 ${form.is_active ? 'bg-green-500' : 'bg-slate-300'}`}
-              >
-                <div className={`w-4 h-4 bg-white rounded-full shadow mt-0.5 transition-transform ${form.is_active ? 'translate-x-5' : 'translate-x-0.5'}`} />
-              </div>
-              <span className="text-sm text-slate-700">Активен в системе</span>
-            </label>
           </div>
         </div>
       </div>

@@ -136,7 +136,6 @@ export default function QueuesPage() {
     })
   }, [wFiltered, periodSort, periodDir])
 
-  const channels = [...new Set((queues || []).map((q) => q.channel))].filter(Boolean)
 
   return (
     <div>
@@ -150,15 +149,6 @@ export default function QueuesPage() {
         <EmptyState title="Нет активных очередей" icon={<PhoneCall size={40} />} />
       ) : (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-            {channels.map((ch) => (
-              <div key={ch} className="card p-4">
-                <p className="text-2xl font-bold text-slate-900">{(queues || []).filter((q) => q.channel === ch).length}</p>
-                <p className="text-sm text-slate-500 mt-0.5">{CHANNEL_LABELS[ch] || ch}</p>
-              </div>
-            ))}
-          </div>
-
           <div className="card overflow-hidden mb-8">
             <table className="w-full text-sm">
               <thead>
