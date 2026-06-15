@@ -10,6 +10,9 @@ import EmptyState from '@/components/common/EmptyState'
 import { AlertCircle, UserCheck, ChevronUp, ChevronDown } from 'lucide-react'
 import { format, subDays } from 'date-fns'
 import DateRangePicker from '@/components/common/DateRangePicker'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
+} from 'recharts'
 
 type SortKey = 'employee_name' | 'handled_calls' | 'avg_talk_sec' | 'total_talk_sec' | 'idle_sec' | 'avg_answer_sec' | 'sl_percent'
 
@@ -43,58 +46,32 @@ function SortHeader({ label, sortKey, current, dir, onSort }: {
   )
 }
 
-const RANK_COLORS = [
-  'bg-amber-400',   // #1
-  'bg-slate-400',   // #2
-  'bg-orange-400',  // #3
-]
-const BAR_COLORS = [
-  '#f59e0b', // #1 золото
-  '#94a3b8', // #2 серебро
-  '#f97316', // #3 бронза
-  '#3b82f6', // #4-15 синий
-]
+const BAR_COLORS = ['#f59e0b', '#94a3b8', '#f97316', '#3b82f6']
 
-function OperatorRankChart({ data }: { data: Array<{ name: string; login: string; handled: number }> }) {
-  const max = data[0]?.handled || 1
+function barColor(i: number) { return BAR_COLORS[Math.min(i, BAR_COLORS.length - 1)] }
+
+function TopChart({ data }: { data: Array<{ name: string; handled: number }> }) {
   return (
-    <div className="space-y-2">
-      {data.map((row, i) => {
-        const pct = Math.round((row.handled / max) * 100)
-        const barColor = BAR_COLORS[Math.min(i, BAR_COLORS.length - 1)]
-        const rankLabel = i < 3 ? ['🥇', '🥈', '🥉'][i] : String(i + 1)
-        return (
-          <div key={i} className="flex items-center gap-3 group">
-            {/* Rank */}
-            <span className="w-8 text-center text-sm font-bold text-slate-400 flex-shrink-0 group-hover:text-slate-600 transition-colors">
-              {rankLabel}
-            </span>
-            {/* Name */}
-            <span className="w-40 text-sm text-slate-700 truncate flex-shrink-0" title={row.name}>
-              {row.name}
-            </span>
-            {/* Bar */}
-            <div className="flex-1 h-7 bg-slate-100 rounded-md overflow-hidden relative">
-              <div
-                className="h-full rounded-md transition-all duration-500"
-                style={{ width: `${pct}%`, backgroundColor: barColor, opacity: 0.85 }}
-              />
-              {/* Inline label */}
-              <span
-                className="absolute inset-y-0 left-2 flex items-center text-xs font-semibold"
-                style={{ color: pct > 20 ? '#fff' : '#475569' }}
-              >
-                {pct > 15 ? `${row.handled} зв.` : ''}
-              </span>
-            </div>
-            {/* Value */}
-            <span className="w-16 text-right text-sm font-bold flex-shrink-0" style={{ color: barColor }}>
-              {row.handled}
-            </span>
-          </div>
-        )
-      })}
-    </div>
+    <ResponsiveContainer width="100%" height={200}>
+      <BarChart data={data} barGap={4} margin={{ top: 4, right: 8, left: -16, bottom: 40 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+        <XAxis
+          dataKey="name"
+          tick={{ fontSize: 10, fill: '#64748b' }}
+          angle={-35}
+          textAnchor="end"
+          interval={0}
+        />
+        <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} allowDecimals={false} />
+        <Tooltip
+          formatter={(v: number) => [`${v} зв.`, 'Звонков']}
+          contentStyle={{ fontSize: 12 }}
+        />
+        <Bar dataKey="handled" radius={[3, 3, 0, 0]}>
+          {data.map((_, i) => <Cell key={i} fill={barColor(i)} />)}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
   )
 }
 
@@ -170,17 +147,9 @@ export default function OperatorLoadPage() {
       {/* Chart top 10 */}
       {chartData.length > 0 && (
         <div className="card p-5 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-800">Топ-10 операторов по звонкам</h2>
-              <p className="text-xs text-slate-400 mt-0.5">За выбранный период · доля от лидера</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs text-slate-400">Лидер</p>
-              <p className="text-lg font-bold text-amber-500">{chartData[0]?.handled} зв.</p>
-            </div>
-          </div>
-          <OperatorRankChart data={chartData} />
+          <h2 className="text-sm font-semibold text-slate-800 mb-1">Топ-10 операторов по звонкам</h2>
+          <p className="text-xs text-slate-400 mb-3">За выбранный период</p>
+          <TopChart data={chartData} />
         </div>
       )}
 
