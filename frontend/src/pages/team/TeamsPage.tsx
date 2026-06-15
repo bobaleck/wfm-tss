@@ -34,32 +34,68 @@ function TeamForm({ team, teams, onClose }: { team?: Team | null; teams: Team[];
   })
 
   return (
-    <form onSubmit={(e) => { e.preventDefault(); mutation.mutate({ ...form, parent_id: form.parent_id || null, leader_id: form.leader_id || null }) }} className="space-y-4">
-      {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</div>}
-      <div><label className="label">Название *</label><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
-      <div className="grid grid-cols-2 gap-4">
-        <div><label className="label">Тип</label>
-          <select className="input" value={form.team_type} onChange={(e) => setForm({ ...form, team_type: e.target.value as any })}>
-            <option value="group">Группа операторов</option><option value="department">Отдел</option><option value="division">Управление</option>
-          </select>
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        mutation.mutate({ ...form, parent_id: form.parent_id || null, leader_id: form.leader_id || null })
+      }}
+      className="space-y-5"
+    >
+      {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{error}</div>}
+
+      <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Основное</p>
         </div>
-        <div><label className="label">Родительская структура</label>
-          <select className="input" value={form.parent_id} onChange={(e) => setForm({ ...form, parent_id: e.target.value })}>
-            <option value="">— нет (корневая) —</option>
-            {teams.filter((t) => t.id !== team?.id).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
+        <div className="p-4 space-y-4">
+          <div>
+            <label className="label">Название *</label>
+            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="Группа продаж" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Тип</label>
+              <select className="input" value={form.team_type} onChange={(e) => setForm({ ...form, team_type: e.target.value as any })}>
+                <option value="group">Группа операторов</option>
+                <option value="department">Отдел</option>
+                <option value="division">Управление</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Входит в структуру</label>
+              <select className="input" value={form.parent_id} onChange={(e) => setForm({ ...form, parent_id: e.target.value })}>
+                <option value="">— корневая —</option>
+                {teams.filter((t) => t.id !== team?.id).map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="label">Руководитель</label>
+            <select className="input" value={form.leader_id} onChange={(e) => setForm({ ...form, leader_id: e.target.value })}>
+              <option value="">— не назначен —</option>
+              {employees?.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.full_name}{emp.position ? ` · ${emp.position}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Описание</label>
+            <textarea className="input" rows={2} value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="Краткое описание команды..." />
+          </div>
         </div>
       </div>
-      <div><label className="label">Руководитель <span className="text-slate-400 text-xs ml-1">(обязательно для групп операторов)</span></label>
-        <select className="input" value={form.leader_id} onChange={(e) => setForm({ ...form, leader_id: e.target.value })}>
-          <option value="">— не назначен —</option>
-          {employees?.map((emp) => <option key={emp.id} value={emp.id}>{emp.full_name}{emp.position ? ` · ${emp.position}` : ''}</option>)}
-        </select>
-      </div>
-      <div><label className="label">Описание</label><textarea className="input" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
-      <div className="flex justify-end gap-2 pt-2">
+
+      <div className="flex justify-end gap-2">
         <button type="button" onClick={onClose} className="btn-secondary">Отмена</button>
-        <button type="submit" className="btn-primary" disabled={mutation.isPending}><Save size={14} /> Сохранить</button>
+        <button type="submit" className="btn-primary" disabled={mutation.isPending}>
+          <Save size={14} /> {mutation.isPending ? 'Сохраняем...' : 'Сохранить'}
+        </button>
       </div>
     </form>
   )
@@ -110,51 +146,59 @@ function AddMemberModal({ team, onClose }: { team: Team; onClose: () => void }) 
   }
 
   return (
-    <div className="space-y-3">
-      <div className="bg-slate-50 rounded-lg p-3 text-sm">
-        <p className="font-medium text-slate-800">Команда: {team.name}</p>
-        <p className="text-slate-500 text-xs mt-0.5">Сейчас: {team.employee_count} сотрудников</p>
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+        <div>
+          <p className="text-sm font-semibold text-slate-800">{team.name}</p>
+          <p className="text-xs text-slate-500 mt-0.5">{team.employee_count} сотрудников в команде</p>
+        </div>
       </div>
-      <input
-        className="input"
-        placeholder="Поиск по имени или логину..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
-      <div className="border border-slate-200 rounded-lg overflow-y-auto max-h-72">
+      <div className="relative">
+        <input
+          className="input pl-9"
+          placeholder="Поиск по имени или логину..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">🔍</span>
+      </div>
+      <div className="border border-slate-200 rounded-xl overflow-hidden overflow-y-auto max-h-72">
         {filtered.length === 0 ? (
-          <p className="text-sm text-slate-400 text-center py-4">Нет сотрудников</p>
+          <p className="text-sm text-slate-400 text-center py-6">Нет сотрудников</p>
         ) : (
           filtered.map((emp) => (
             <label
               key={emp.id}
-              className={`flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0 ${selectedIds.has(emp.id) ? 'bg-brand-50' : ''}`}
+              className={`flex items-center gap-3 px-4 py-3 cursor-pointer border-b border-slate-100 last:border-0 transition-colors ${
+                selectedIds.has(emp.id) ? 'bg-brand-50' : 'hover:bg-slate-50'
+              }`}
             >
-              <input
-                type="checkbox"
-                checked={selectedIds.has(emp.id)}
-                onChange={() => toggle(emp.id)}
-                className="rounded"
-              />
+              <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                selectedIds.has(emp.id) ? 'bg-brand-600 border-brand-600' : 'border-slate-300'
+              }`} onClick={() => toggle(emp.id)}>
+                {selectedIds.has(emp.id) && (
+                  <svg width="8" height="6" viewBox="0 0 8 6" fill="none">
+                    <path d="M1 3L3 5L7 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+              </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-slate-900 truncate">{emp.full_name}</p>
-                {emp.team_name && <p className="text-xs text-slate-400 truncate">Команда: {emp.team_name}</p>}
+                {emp.team_name && <p className="text-xs text-slate-400 truncate">Текущая команда: {emp.team_name}</p>}
               </div>
-              {emp.employment_status === 'new' && <span className="text-xs text-blue-600 flex-shrink-0">Новый</span>}
+              {emp.employment_status === 'new' && (
+                <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full flex-shrink-0">Новый</span>
+              )}
             </label>
           ))
         )}
       </div>
       {selectedIds.size > 0 && (
-        <p className="text-xs text-slate-500">Выбрано: {selectedIds.size}</p>
+        <p className="text-xs text-brand-700 bg-brand-50 px-3 py-1.5 rounded-lg">Выбрано: {selectedIds.size}</p>
       )}
       <div className="flex justify-end gap-2">
         <button onClick={onClose} className="btn-secondary">Отмена</button>
-        <button
-          onClick={handleAdd}
-          disabled={selectedIds.size === 0 || adding}
-          className="btn-primary"
-        >
+        <button onClick={handleAdd} disabled={selectedIds.size === 0 || adding} className="btn-primary">
           <UserPlus size={14} /> Добавить{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
         </button>
       </div>

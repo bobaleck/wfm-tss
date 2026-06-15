@@ -18,14 +18,34 @@ function SkillForm({ skill, onClose }: { skill?: Skill | null; onClose: () => vo
     onError: (e: any) => setError(e.response?.data?.detail || 'Ошибка'),
   })
   return (
-    <form onSubmit={(e) => { e.preventDefault(); mutation.mutate(form) }} className="space-y-4">
-      {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</div>}
-      <div><label className="label">Название навыка *</label><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
-      <div><label className="label">Код</label><input className="input" value={form.code} placeholder="например: CHAT" onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
-      <div><label className="label">Описание</label><textarea className="input" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
-      <div className="flex justify-end gap-2 pt-2">
+    <form onSubmit={(e) => { e.preventDefault(); mutation.mutate(form) }} className="space-y-5">
+      {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{error}</div>}
+      <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Параметры навыка</p>
+        </div>
+        <div className="p-4 space-y-4">
+          <div>
+            <label className="label">Название *</label>
+            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="Продажи входящие" />
+          </div>
+          <div>
+            <label className="label">Код <span className="text-slate-400 font-normal">(краткое обозначение)</span></label>
+            <input className="input font-mono" value={form.code} placeholder="SALES_IN" onChange={(e) => setForm({ ...form, code: e.target.value })} />
+          </div>
+          <div>
+            <label className="label">Описание</label>
+            <textarea className="input" rows={2} value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="Краткое описание навыка..." />
+          </div>
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
         <button type="button" onClick={onClose} className="btn-secondary">Отмена</button>
-        <button type="submit" className="btn-primary" disabled={mutation.isPending}><Save size={14} /> Сохранить</button>
+        <button type="submit" className="btn-primary" disabled={mutation.isPending}>
+          <Save size={14} /> {mutation.isPending ? 'Сохраняем...' : 'Сохранить'}
+        </button>
       </div>
     </form>
   )

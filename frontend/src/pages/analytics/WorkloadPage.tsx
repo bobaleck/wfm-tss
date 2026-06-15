@@ -8,6 +8,7 @@ import StatCard from '@/components/common/StatCard'
 import { PageSpinner } from '@/components/ui/Spinner'
 import EmptyState from '@/components/common/EmptyState'
 import QueueFilterDropdown from '@/components/common/QueueFilterDropdown'
+import DateRangePicker from '@/components/common/DateRangePicker'
 import { AlertCircle, TrendingUp } from 'lucide-react'
 import { format, subDays } from 'date-fns'
 import {
@@ -100,8 +101,7 @@ export default function WorkloadPage() {
 
       {/* Filters */}
       <div className="card p-4 mb-6 flex flex-wrap items-end gap-4">
-        <div><label className="label">С</label><input type="date" className="input w-40" value={begin} onChange={(e) => setBegin(e.target.value)} /></div>
-        <div><label className="label">По</label><input type="date" className="input w-40" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
+        <DateRangePicker begin={begin} end={end} onChange={(b, e) => { setBegin(b); setEnd(e) }} />
         <div>
           <label className="label">Интервал</label>
           <select className="input w-32" value={interval} onChange={(e) => setIntervalValue(e.target.value as any)}>

@@ -80,8 +80,9 @@ def sync_from_naumen(
     """
     Синхронизация сотрудников с Naumen.
     - Новые → добавляются со статусом 'new' (если активны в 30 дней) или 'fired'.
-    - Существующие → НЕ изменяются, кроме автоматического выставления 'fired'
-      если сотрудник не выходил в линию по этому проекту более 30 дней.
+    - Существующие → НЕ изменяются, кроме:
+      a) автовыставление 'fired' если не активен 30+ дней
+      b) удаление записи если в Naumen нет активности за 180+ дней (освобождение памяти)
     """
     from datetime import date, timedelta
     overrides = _build_overrides(db)
@@ -91,15 +92,25 @@ def sync_from_naumen(
     except Exception as e:
         raise HTTPException(503, detail=str(e))
 
-    # Логины, активные за последние 30 дней на этом проекте
+    naumen_logins = {ne.get("login") for ne in naumen_employees if ne.get("login")}
+
+    # Активные за 30 дней (для статуса)
     try:
-        cutoff = (date.today() - timedelta(days=30)).isoformat()
-        active_logins = naumen.get_active_logins_since(project_uuid, cutoff, overrides)
+        cutoff_30 = (date.today() - timedelta(days=30)).isoformat()
+        active_logins = naumen.get_active_logins_since(project_uuid, cutoff_30, overrides)
     except Exception:
         active_logins = set()
 
+    # Активные за 180 дней (для удаления — те, кого нет в этом списке, удаляем)
+    try:
+        cutoff_180 = (date.today() - timedelta(days=180)).isoformat()
+        active_6mo = naumen.get_active_logins_since(project_uuid, cutoff_180, overrides)
+    except Exception:
+        active_6mo = set()
+
     added = 0
     fired_auto = 0
+    deleted_stale = 0
 
     for ne in naumen_employees:
         login = ne.get("login")
@@ -112,14 +123,20 @@ def sync_from_naumen(
         ).first()
 
         is_active_30d = login in active_logins
+        is_active_6mo = login in active_6mo
 
         if existing:
-            # Единственное автоматическое изменение — неактивность > 30 дней
-            if not is_active_30d and existing.employment_status != "fired":
+            if not is_active_6mo and existing.employment_status == "fired":
+                # Уволен и не заходил 6+ месяцев — удаляем
+                db.delete(existing)
+                deleted_stale += 1
+            elif not is_active_30d and existing.employment_status != "fired":
                 existing.employment_status = "fired"
                 fired_auto += 1
-            # Все остальные поля (ФИО, статус, график и т.д.) — не трогаем
         else:
+            if not is_active_6mo:
+                # Не был активен 6 месяцев и нет в базе — пропускаем
+                continue
             emp = Employee(
                 full_name=ne.get("employee_name") or login,
                 naumen_login=login,
@@ -138,6 +155,7 @@ def sync_from_naumen(
         "ok": True,
         "added": added,
         "fired_auto": fired_auto,
+        "deleted_stale": deleted_stale,
         "total_from_naumen": len(naumen_employees),
         "active_in_30d": len(active_logins),
     }

@@ -55,39 +55,91 @@ function EmployeeForm({ employee, onClose }: { employee?: Employee | null; onClo
   })
 
   return (
-    <form onSubmit={(e) => { e.preventDefault(); mutation.mutate({ ...form, team_id: form.team_id || null, preferred_schedule: form.preferred_schedule || null }) }} className="space-y-4">
-      {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</div>}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="col-span-2"><label className="label">ФИО *</label><input className="input" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} required /></div>
-        <div><label className="label">Статус</label>
-          <select className="input" value={form.employment_status} onChange={(e) => setForm({ ...form, employment_status: e.target.value as any })}>
-            <option value="new">Новый</option><option value="active">Работает</option><option value="fired">Уволен</option>
-          </select>
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        mutation.mutate({ ...form, team_id: form.team_id || null, preferred_schedule: form.preferred_schedule || null })
+      }}
+      className="space-y-5"
+    >
+      {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{error}</div>}
+
+      {/* Личные данные */}
+      <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Личные данные</p>
         </div>
-        <div><label className="label">Приоритетный график</label>
-          <select className="input" value={form.preferred_schedule} onChange={(e) => setForm({ ...form, preferred_schedule: e.target.value })}>
-            <option value="">— не указан —</option>
-            {(schedules || []).map((s: any) => <option key={s.id} value={s.name}>{s.name}</option>)}
-          </select>
-        </div>
-        <div><label className="label">Должность</label><input className="input" value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} /></div>
-        <div><label className="label">Команда</label>
-          <select className="input" value={form.team_id} onChange={(e) => setForm({ ...form, team_id: e.target.value })}>
-            <option value="">— не выбрана —</option>
-            {teams?.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-        </div>
-        <div><label className="label">Логин Naumen</label><input className="input" value={form.naumen_login} onChange={(e) => setForm({ ...form, naumen_login: e.target.value })} /></div>
-        <div><label className="label">Email</label><input className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-        <div className="col-span-2"><label className="label">Телефон</label><input className="input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
-        <div className="col-span-2 flex items-center gap-2">
-          <input type="checkbox" id="is_active" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} className="rounded" />
-          <label htmlFor="is_active" className="text-sm text-slate-700">Активен в системе</label>
+        <div className="p-4 grid grid-cols-2 gap-4">
+          <div className="col-span-2">
+            <label className="label">ФИО *</label>
+            <input className="input" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} required placeholder="Иванов Иван Иванович" />
+          </div>
+          <div>
+            <label className="label">Должность</label>
+            <input className="input" value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} placeholder="Оператор" />
+          </div>
+          <div>
+            <label className="label">Статус занятости</label>
+            <select className="input" value={form.employment_status} onChange={(e) => setForm({ ...form, employment_status: e.target.value as any })}>
+              <option value="new">Новый</option>
+              <option value="active">Работает</option>
+              <option value="fired">Уволен</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Email</label>
+            <input className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="ivan@example.com" />
+          </div>
+          <div>
+            <label className="label">Телефон</label>
+            <input className="input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+7 999 000-00-00" />
+          </div>
         </div>
       </div>
-      <div className="flex justify-end gap-2 pt-2">
+
+      {/* Рабочие параметры */}
+      <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Рабочие параметры</p>
+        </div>
+        <div className="p-4 grid grid-cols-2 gap-4">
+          <div>
+            <label className="label">Команда</label>
+            <select className="input" value={form.team_id} onChange={(e) => setForm({ ...form, team_id: e.target.value })}>
+              <option value="">— не выбрана —</option>
+              {teams?.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Приоритетный график</label>
+            <select className="input" value={form.preferred_schedule} onChange={(e) => setForm({ ...form, preferred_schedule: e.target.value })}>
+              <option value="">— не указан —</option>
+              {(schedules || []).map((s: any) => <option key={s.id} value={s.name}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Логин Naumen</label>
+            <input className="input font-mono" value={form.naumen_login} onChange={(e) => setForm({ ...form, naumen_login: e.target.value })} placeholder="ivanov_i" />
+          </div>
+          <div className="flex items-end pb-0.5">
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <div
+                onClick={() => setForm({ ...form, is_active: !form.is_active })}
+                className={`w-10 h-5 rounded-full transition-colors cursor-pointer flex-shrink-0 ${form.is_active ? 'bg-green-500' : 'bg-slate-300'}`}
+              >
+                <div className={`w-4 h-4 bg-white rounded-full shadow mt-0.5 transition-transform ${form.is_active ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              </div>
+              <span className="text-sm text-slate-700">Активен в системе</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-2 pt-1">
         <button type="button" onClick={onClose} className="btn-secondary">Отмена</button>
-        <button type="submit" className="btn-primary" disabled={mutation.isPending}><Save size={14} />{mutation.isPending ? 'Сохраняем...' : 'Сохранить'}</button>
+        <button type="submit" className="btn-primary" disabled={mutation.isPending}>
+          <Save size={14} /> {mutation.isPending ? 'Сохраняем...' : 'Сохранить'}
+        </button>
       </div>
     </form>
   )
@@ -350,8 +402,12 @@ export default function EmployeesPage() {
       const res = await api.post('/employees/sync-naumen', null, {
         params: { project_uuid: activeProject.customer_uuid },
       })
-      const { added, fired_auto, total_from_naumen, active_in_30d } = res.data
-      setSyncResult(`Из Naumen получено: ${total_from_naumen}, активны за 30 дней: ${active_in_30d}. Добавлено новых: ${added}. Помечено уволенными (неактивны 30+ дней): ${fired_auto}.`)
+      const { added, fired_auto, deleted_stale, total_from_naumen, active_in_30d } = res.data
+      setSyncResult(
+        `Из Naumen получено: ${total_from_naumen}, активны за 30 дней: ${active_in_30d}. ` +
+        `Добавлено: ${added}. Помечено уволенными: ${fired_auto}. ` +
+        `Удалено (неактивны 6+ мес.): ${deleted_stale ?? 0}.`
+      )
       qc.invalidateQueries({ queryKey: ['employees'] })
     } catch (e: any) {
       setSyncResult(`Ошибка: ${e.response?.data?.detail || e.message}`)

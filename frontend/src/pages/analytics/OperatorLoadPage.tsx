@@ -9,6 +9,7 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import EmptyState from '@/components/common/EmptyState'
 import { AlertCircle, UserCheck, ChevronUp, ChevronDown } from 'lucide-react'
 import { format, subDays } from 'date-fns'
+import DateRangePicker from '@/components/common/DateRangePicker'
 
 type SortKey = 'employee_name' | 'handled_calls' | 'avg_talk_sec' | 'total_talk_sec' | 'idle_sec' | 'avg_answer_sec' | 'sl_percent'
 
@@ -153,8 +154,7 @@ export default function OperatorLoadPage() {
       <PageHeader title="Нагрузка операторов" subtitle={`Проект: ${activeProject.customer_name}`} />
 
       <div className="card p-4 mb-6 flex flex-wrap items-end gap-4">
-        <div><label className="label">С</label><input type="date" className="input w-40" value={begin} onChange={(e) => setBegin(e.target.value)} /></div>
-        <div><label className="label">По</label><input type="date" className="input w-40" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
+        <DateRangePicker begin={begin} end={end} onChange={(b, e) => { setBegin(b); setEnd(e) }} />
         <div className="flex-1 min-w-48">
           <label className="label">Поиск оператора</label>
           <input className="input" placeholder="Имя или логин..." value={search} onChange={(e) => setSearch(e.target.value)} />

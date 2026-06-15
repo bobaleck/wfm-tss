@@ -161,25 +161,27 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         {/* Chart */}
         {activeProject && (
-          <div className="card p-6 lg:col-span-2">
+          <div className="card p-6 lg:col-span-2 flex flex-col">
             <h2 className="text-sm font-semibold text-slate-800 mb-4">Нагрузка за 7 дней</h2>
-            {workloadQuery.isLoading ? (
-              <PageSpinner />
-            ) : chartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={chartData} barGap={4}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="handled" name="Обработано" fill="#2563eb" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="lost" name="Потеряно" fill="#ef4444" radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-sm text-slate-400 text-center py-8">Нет данных за период</p>
-            )}
+            <div className="flex-1 min-h-[200px]">
+              {workloadQuery.isLoading ? (
+                <PageSpinner />
+              ) : chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} barGap={4}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="handled" name="Обработано" fill="#2563eb" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="lost" name="Потеряно" fill="#ef4444" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="text-sm text-slate-400 text-center py-8">Нет данных за период</p>
+              )}
+            </div>
           </div>
         )}
 
@@ -284,23 +286,28 @@ export default function DashboardPage() {
           <div className="space-y-2">
             {(queuesQuery.data || []).map((q: any) => {
               const targetSl = q.target_sl ?? null
+              const actualSl = q.sl_percent ?? null
               const ch = q.channel ?? ''
+              const displaySl = actualSl ?? targetSl
               return (
                 <div key={q.name} className="flex items-center gap-3">
                   <div className="w-48 min-w-0 flex-shrink-0">
                     <p className="text-sm text-slate-700 truncate" title={q.name}>{q.name}</p>
-                    <p className="text-xs text-slate-400">{ch || ''}{targetSl != null ? (ch ? ` · цель ${targetSl}%` : `цель ${targetSl}%`) : ''}</p>
+                    <p className="text-xs text-slate-400">
+                      {ch || ''}
+                      {targetSl != null ? (ch ? ` · цель ${targetSl}%` : `цель ${targetSl}%`) : ''}
+                    </p>
                   </div>
                   <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                    {targetSl !== null && (
+                    {displaySl !== null && (
                       <div
                         className="h-full rounded-full transition-all"
-                        style={{ width: `${Math.min(targetSl, 100)}%`, backgroundColor: slBarColor(targetSl, targetSl) }}
+                        style={{ width: `${Math.min(displaySl, 100)}%`, backgroundColor: slBarColor(displaySl, targetSl) }}
                       />
                     )}
                   </div>
-                  <span className={`text-sm font-semibold w-14 text-right flex-shrink-0 ${targetSl === null ? 'text-slate-300' : slColor(targetSl, targetSl)}`}>
-                    {targetSl !== null ? `${targetSl}%` : '—'}
+                  <span className={`text-sm font-semibold w-14 text-right flex-shrink-0 ${displaySl === null ? 'text-slate-300' : slColor(displaySl, targetSl)}`}>
+                    {displaySl !== null ? `${displaySl}%` : '—'}
                   </span>
                 </div>
               )
