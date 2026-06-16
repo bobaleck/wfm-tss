@@ -11,45 +11,22 @@ import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import EmptyState from '@/components/common/EmptyState'
 import { format, subDays, addDays } from 'date-fns'
+import { useStatusClassifier, type StatusGroup } from '@/utils/statusClassification'
 
 type ShiftSortKey = 'employee_name' | 'shift_date' | 'start_time' | 'end_time' | 'schedule_name' | 'status' | 'actual_hours_worked'
 type SessionSortKey = 'employee_name' | 'first_login' | 'last_logout' | 'normal_sec' | 'non_normal_sec' | 'shift_sec' | 'break_count'
 
-// ─── Классификация статусов в 4 группы ──────────────────────────────────────
-// "Работает" = в разговоре или ожидает звонка
-// "Простой"  = на паузе, недоступен, обед и т.п.
-// "Офлайн"   = вышел из системы
-// "Другое"   = кастомные/неизвестные статусы
-const WORK_STATUSES = new Set([
-  'normal', 'ready', 'available', 'online', 'ringing', 'ringing#voice',
-  'speaking', 'speaking#voice', 'inservice',
-])
-const PAUSE_STATUSES = new Set([
-  'break', 'lunch', 'training', 'meeting', 'not_ready', 'notavailable',
-  'away', 'wrapup', 'wrapup#voice', 'acw', 'dnd', 'busy', 'custom',
-  'custom1', 'custom2', 'custom3', 'custom4', 'custom5',
-])
-const OFFLINE_STATUSES = new Set(['offline', 'logged_out', 'signedoff'])
-
-type GroupKey = 'work' | 'pause' | 'offline' | 'other'
-
-const GROUP_CONFIG: Record<GroupKey, { bg: string; label: string }> = {
+// Классификация статусов (work/pause/offline) — единая с Онлайн-мониторингом,
+// включая индивидуальные настройки проекта (см. useStatusClassifier).
+const GROUP_CONFIG: Record<StatusGroup, { bg: string; label: string }> = {
   work:    { bg: '#22c55e', label: 'Работает' },
   pause:   { bg: '#f59e0b', label: 'Простой' },
   offline: { bg: '#94a3b8', label: 'Офлайн' },
-  other:   { bg: '#a78bfa', label: 'Другое' },
-}
-
-function classifyStatus(status: string): GroupKey {
-  const s = status.toLowerCase()
-  if (WORK_STATUSES.has(s)) return 'work'
-  if (PAUSE_STATUSES.has(s)) return 'pause'
-  if (OFFLINE_STATUSES.has(s)) return 'offline'
-  return 'other'
 }
 
 // ─── Временная линия статусов ────────────────────────────────────────────────
-function StatusTimeline({ login, workDate }: { login: string; workDate: string }) {
+function StatusTimeline({ login, workDate, partnerUuid }: { login: string; workDate: string; partnerUuid: string | undefined }) {
+  const { classify, label } = useStatusClassifier(partnerUuid)
   const { data, isLoading } = useQuery({
     queryKey: ['timeline', login, workDate],
     queryFn: () =>
@@ -70,10 +47,10 @@ function StatusTimeline({ login, workDate }: { login: string; workDate: string }
   const totalMs = Math.max(1, dayEnd.getTime() - dayStart.getTime())
 
   // Aggregate totals per group for legend
-  const groupTotals: Record<GroupKey, number> = { work: 0, pause: 0, offline: 0, other: 0 }
-  for (const e of data) groupTotals[classifyStatus(e.status)] += e.duration_sec
+  const groupTotals: Record<StatusGroup, number> = { work: 0, pause: 0, offline: 0 }
+  for (const e of data) groupTotals[classify(e.status)] += e.duration_sec
 
-  const presentGroups = (Object.keys(groupTotals) as GroupKey[]).filter((k) => groupTotals[k] > 0)
+  const presentGroups = (Object.keys(groupTotals) as StatusGroup[]).filter((k) => groupTotals[k] > 0)
 
   return (
     <div className="px-4 py-3 bg-white border-t border-slate-100">
@@ -82,13 +59,12 @@ function StatusTimeline({ login, workDate }: { login: string; workDate: string }
         {data.map((evt, i) => {
           const start = (new Date(evt.entered).getTime() - dayStart.getTime()) / totalMs * 100
           const dur = Math.max(0.3, (evt.duration_sec * 1000) / totalMs * 100)
-          const group = classifyStatus(evt.status)
+          const group = classify(evt.status)
           const { bg } = GROUP_CONFIG[group]
-          const originalLabel = evt.status
           return (
             <div
               key={i}
-              title={`${GROUP_CONFIG[group].label} (${originalLabel}): ${evt.entered.slice(11, 16)} · ${Math.round(evt.duration_sec / 60)} мин`}
+              title={`${GROUP_CONFIG[group].label} (${label(evt.status)}): ${evt.entered.slice(11, 16)} · ${Math.round(evt.duration_sec / 60)} мин`}
               style={{
                 position: 'absolute',
                 left: `${start}%`,
@@ -115,7 +91,7 @@ function StatusTimeline({ login, workDate }: { login: string; workDate: string }
         })}
       </div>
 
-      {/* Легенда — 4 группы */}
+      {/* Легенда */}
       <div className="flex flex-wrap gap-4">
         {presentGroups.map((g) => (
           <div key={g} className="flex items-center gap-1.5 text-xs text-slate-600">
@@ -658,7 +634,7 @@ export default function ShiftsPage() {
                                   {isExpanded && (
                                     <tr key={`${i}-tl`} className="border-b border-slate-100">
                                       <td colSpan={8} className="p-0">
-                                        <StatusTimeline login={s.login} workDate={date} />
+                                        <StatusTimeline login={s.login} workDate={date} partnerUuid={activeProject?.customer_uuid} />
                                       </td>
                                     </tr>
                                   )}

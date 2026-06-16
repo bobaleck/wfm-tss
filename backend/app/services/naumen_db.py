@@ -136,6 +136,7 @@ def get_workload(partner_uuid: str, begin_date: str, end_date: str,
 # ─── Операторская нагрузка ────────────────────────────────────────────────────
 
 def get_operator_load(partner_uuid: str, begin_date: str, end_date: str,
+                      work_statuses: list = None, offline_statuses: list = None,
                       overrides: dict = None) -> list[dict]:
     query = """
     WITH active_queues AS (
@@ -183,15 +184,12 @@ def get_operator_load(partner_uuid: str, begin_date: str, end_date: str,
                           cl_rd.dst_id, cl_rd.dst_abonent)
     ),
     status_summary AS (
-        -- idle_sec = time in pause/unavailable statuses (matches "Простой" group from ShiftsPage)
+        -- idle_sec = время в статусах "На паузе" — той же классификации, что и в Онлайн/Сменах
         SELECT
             sc.login,
             ROUND(SUM(COALESCE(sc.duration, 0)) FILTER (
-                WHERE lower(sc.status) NOT IN (
-                    'normal', 'ready', 'available', 'online', 'ringing', 'speaking',
-                    'inservice', 'ringing#voice', 'speaking#voice',
-                    'offline', 'logged_out', 'signedoff', 'loggedoff'
-                )
+                WHERE NOT (lower(sc.status) = ANY(%(work_statuses)s)
+                       OR  lower(sc.status) = ANY(%(offline_statuses)s))
             )::numeric, 0) AS idle_sec
         FROM status_changes sc
         WHERE sc.entered >= %(begin_date)s::timestamp
@@ -213,7 +211,15 @@ def get_operator_load(partner_uuid: str, begin_date: str, end_date: str,
     LEFT JOIN status_summary ss ON ss.login = oc.login
     ORDER BY oc.handled_calls DESC
     """
-    return _execute(query, {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}, overrides)
+    from app.services.status_classification import STANDARD_WORK, STANDARD_OFFLINE
+    params = {
+        "partner_uuid": partner_uuid,
+        "begin_date": begin_date,
+        "end_date": end_date,
+        "work_statuses": work_statuses if work_statuses is not None else list(STANDARD_WORK),
+        "offline_statuses": offline_statuses if offline_statuses is not None else list(STANDARD_OFFLINE),
+    }
+    return _execute(query, params, overrides)
 
 
 # ─── Статусы операторов ───────────────────────────────────────────────────────
@@ -256,6 +262,32 @@ def get_status_summary(partner_uuid: str, begin_date: str, end_date: str,
     ORDER BY sc.login, total_duration_sec DESC
     """
     return _execute(query, {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}, overrides)
+
+
+def get_distinct_statuses_for_project(partner_uuid: str, overrides: dict = None) -> list[str]:
+    """Все уникальные статусы, встречавшиеся у операторов проекта за последние 180 дней.
+    Используется страницей "Статусы" для автообнаружения кастомных статусов (Custom1 и т.п.)."""
+    query = """
+    WITH project_logins AS (
+        SELECT DISTINCT COALESCE(cl.dst_id, cl.dst_abonent) AS login
+        FROM queued_calls_ms que
+        JOIN mv_incoming_call_project icp ON icp.uuid = que.project_id
+        LEFT JOIN call_legs cl ON cl.session_id = que.session_id
+                               AND cl.leg_id = que.next_leg_id
+        WHERE icp.partneruuid = %(partner_uuid)s
+          AND icp.removed = false
+          AND que.final_stage = 'operator'
+          AND que.enqueued_time >= now() - INTERVAL '180 days'
+          AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
+    )
+    SELECT DISTINCT sc.status AS status
+    FROM status_changes sc
+    JOIN project_logins pl ON pl.login = sc.login
+    WHERE sc.entered >= now() - INTERVAL '180 days'
+    ORDER BY sc.status
+    """
+    result = _execute(query, {"partner_uuid": partner_uuid}, overrides)
+    return [row["status"] for row in result]
 
 
 # ─── Сотрудники из Naumen ─────────────────────────────────────────────────────
@@ -326,16 +358,22 @@ def get_active_logins_since(partner_uuid: str, cutoff_date: str, overrides: dict
 
 
 def get_operator_sessions(logins: list, begin_date: str, end_date: str,
+                          work_statuses: list = None, offline_statuses: list = None,
                           overrides: dict = None) -> list[dict]:
     """
     История сессий операторов по дням из status_changes.
-    first_login  — первый вход в статус available (начало смены).
-    last_login   — последний вход в статус available (последнее возвращение на линию).
-    last_logout  — момент перехода в статус offline (конец смены).
-    break_count  — число переходов available → non-available/non-offline.
+    Классификация статусов (work_statuses/offline_statuses) — та же, что в
+    Онлайн-мониторинге: стандартные статусы + пользовательские настройки проекта
+    (см. app.services.status_classification.build_status_sets).
+    first_login  — первый вход в "рабочий" статус (начало смены).
+    last_logout  — момент перехода в "офлайн" статус (конец смены).
+    break_count  — число переходов из рабочего в не-рабочий/не-офлайн статус.
     """
     if not logins:
         return []
+    from app.services.status_classification import STANDARD_WORK, STANDARD_OFFLINE
+    work_statuses = work_statuses if work_statuses is not None else list(STANDARD_WORK)
+    offline_statuses = offline_statuses if offline_statuses is not None else list(STANDARD_OFFLINE)
     query = """
     WITH events AS (
         -- Берём события из range; duration НЕ используем из VIEW —
@@ -375,29 +413,33 @@ def get_operator_sessions(logins: list, begin_date: str, end_date: str,
     SELECT
         login                                                                              AS login,
         work_date                                                                          AS work_date,
-        MIN(entered) FILTER (WHERE status IN ('normal', 'available'))                     AS first_login,
+        MIN(entered) FILTER (WHERE lower(status) = ANY(%(work_statuses)s))                AS first_login,
         COALESCE(
-            MAX(entered) FILTER (WHERE status = 'offline'),
+            MAX(entered) FILTER (WHERE lower(status) = ANY(%(offline_statuses)s)),
             MAX(entered + make_interval(secs => duration::float))
         )                                                                                  AS last_logout,
         ROUND(SUM(duration)::numeric, 0)                                                   AS total_sec,
-        ROUND(SUM(duration) FILTER (WHERE status IN ('normal', 'available'))::numeric, 0) AS normal_sec,
+        ROUND(SUM(duration) FILTER (WHERE lower(status) = ANY(%(work_statuses)s))::numeric, 0) AS normal_sec,
         ROUND(SUM(duration) FILTER (
-            WHERE status NOT IN ('normal', 'available', 'offline')
+            WHERE NOT (lower(status) = ANY(%(work_statuses)s) OR lower(status) = ANY(%(offline_statuses)s))
         )::numeric, 0)                                                                    AS non_normal_sec,
         ROUND(SUM(duration) FILTER (
-            WHERE status != 'offline'
+            WHERE NOT (lower(status) = ANY(%(offline_statuses)s))
         )::numeric, 0)                                                                    AS shift_sec,
         COUNT(*) FILTER (
-            WHERE status NOT IN ('normal', 'available', 'offline')
-              AND (prev_status IN ('normal', 'available') OR prev_status IS NULL)
+            WHERE NOT (lower(status) = ANY(%(work_statuses)s) OR lower(status) = ANY(%(offline_statuses)s))
+              AND (lower(prev_status) = ANY(%(work_statuses)s) OR prev_status IS NULL)
         )                                                                                  AS break_count,
         STRING_AGG(DISTINCT status, ', ' ORDER BY status)                                 AS statuses_seen
     FROM raw
     GROUP BY login, work_date
     ORDER BY login, work_date
     """
-    return _execute(query, {"logins": logins, "begin_date": begin_date, "end_date": end_date}, overrides)
+    params = {
+        "logins": logins, "begin_date": begin_date, "end_date": end_date,
+        "work_statuses": work_statuses, "offline_statuses": offline_statuses,
+    }
+    return _execute(query, params, overrides)
 
 
 def get_operator_timeline(login: str, work_date: str, overrides: dict = None) -> list[dict]:

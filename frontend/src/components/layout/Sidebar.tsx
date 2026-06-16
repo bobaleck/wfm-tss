@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, UsersRound, Star, BarChart3, TrendingUp,
   UserCheck, Calendar, CalendarOff, Clock4, FileBarChart2, Settings2,
   UserCog, ScrollText, Plug, Info, BookOpen, ChevronDown, ChevronRight,
-  PhoneCall, Clock, UsersIcon, Radio, FolderOpen,
+  PhoneCall, Clock, UsersIcon, Radio, FolderOpen, Tag,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
 import type { UserRole } from '@/types'
@@ -65,6 +65,7 @@ const bottom: NavItem[] = [
     children: [
       { label: 'Общие',    icon: <Settings2 size={16} />,    to: '/settings', section: 'settings' },
       { label: 'Проекты',  icon: <FolderOpen size={16} />,   to: '/settings/projects', section: 'settings' },
+      { label: 'Статусы',  icon: <Tag size={16} />,          to: '/statuses', section: 'settings' },
     ],
   },
   { label: 'Пользователи',  icon: <UserCog size={18} />,      to: '/users', section: 'users' },

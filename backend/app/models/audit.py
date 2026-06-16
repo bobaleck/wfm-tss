@@ -56,11 +56,13 @@ class QueueSetting(Base):
 
 
 class StatusConfig(Base):
-    """Пользовательская классификация нестандартных статусов Naumen."""
+    """Классификация нестандартных статусов Naumen — индивидуально для каждого проекта."""
     __tablename__ = "status_configs"
+    __table_args__ = (UniqueConstraint("project_uuid", "status_name", name="uq_status_project"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    status_name = Column(String(100), unique=True, index=True, nullable=False)
+    project_uuid = Column(String(100), nullable=False, index=True)
+    status_name = Column(String(100), nullable=False, index=True)
     classification = Column(String(20), nullable=False, default='pause')  # work | pause | offline
     label = Column(String(100), nullable=True)
     created_at = Column(DateTime, server_default=func.now())

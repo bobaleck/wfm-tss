@@ -8,6 +8,7 @@ import EmptyState from '@/components/common/EmptyState'
 import { AlertCircle, Radio, RefreshCw, Users } from 'lucide-react'
 import { format } from 'date-fns'
 import { requiredAgents } from '@/utils/erlang'
+import { useStatusClassifier } from '@/utils/statusClassification'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 
 interface CurrentOperator {
@@ -20,85 +21,6 @@ interface CurrentOperator {
 const REFRESH_MS = 5 * 60 * 1000
 const WINDOW_H = 24   // show operators whose last status is within this window
 const STALE_ONLINE_H = 12 // if online status is older than this, treat as "left"
-
-const STATUS_LABEL: Record<string, string> = {
-  normal: 'В линии',
-  ready: 'Готов',
-  available: 'Доступен',
-  ringing: 'Вызов',
-  speaking: 'Разговор',
-  inservice: 'Обслуживание',
-  'ringing#voice': 'Вызов',
-  'speaking#voice': 'Разговор',
-  break: 'Перерыв',
-  lunch: 'Обед',
-  training: 'Обучение',
-  away: 'Отсутствует',
-  notavailable: 'Недоступен',
-  not_available: 'Недоступен',
-  wrapup: 'После звонка',
-  'wrapup#voice': 'После звонка',
-  acw: 'После звонка',
-  busy: 'Занят',
-  offline: 'Офлайн',
-  logged_out: 'Вышел',
-  signedoff: 'Вышел',
-  loggedoff: 'Вышел',
-  disconnected: 'Отключён',
-}
-
-const STATUS_COLOR: Record<string, string> = {
-  normal: 'bg-green-100 text-green-700',
-  ready: 'bg-emerald-100 text-emerald-700',
-  available: 'bg-teal-100 text-teal-700',
-  ringing: 'bg-cyan-100 text-cyan-700',
-  speaking: 'bg-blue-100 text-blue-700',
-  inservice: 'bg-blue-100 text-blue-700',
-  'ringing#voice': 'bg-cyan-100 text-cyan-700',
-  'speaking#voice': 'bg-blue-100 text-blue-700',
-  break: 'bg-yellow-100 text-yellow-700',
-  lunch: 'bg-orange-100 text-orange-700',
-  training: 'bg-purple-100 text-purple-700',
-  away: 'bg-amber-100 text-amber-700',
-  notavailable: 'bg-red-100 text-red-600',
-  not_available: 'bg-red-100 text-red-600',
-  wrapup: 'bg-sky-100 text-sky-700',
-  'wrapup#voice': 'bg-sky-100 text-sky-700',
-  acw: 'bg-sky-100 text-sky-700',
-  busy: 'bg-rose-100 text-rose-700',
-  offline: 'bg-slate-100 text-slate-500',
-  logged_out: 'bg-slate-100 text-slate-400',
-  signedoff: 'bg-slate-100 text-slate-400',
-  loggedoff: 'bg-slate-100 text-slate-400',
-  disconnected: 'bg-slate-100 text-slate-400',
-}
-
-const WORK_STATUSES = new Set([
-  'normal', 'ready', 'available', 'ringing', 'speaking', 'inservice',
-  'ringing#voice', 'speaking#voice',
-  'wrapup', 'wrapup#voice', 'acw',
-])
-const OFFLINE_STATUSES = new Set([
-  'offline', 'logged_out', 'signedoff', 'loggedoff', 'disconnected',
-  'away', 'notavailable', 'not_available',
-])
-
-// Custom* statuses in Naumen CC are always operator-defined pauses (breaks), never work statuses.
-function statusLabel(s: string) {
-  const k = s.toLowerCase()
-  if (STATUS_LABEL[k]) return STATUS_LABEL[k]
-  if (k.startsWith('custom')) return `Перерыв (${s})`
-  return s
-}
-function statusColor(s: string) {
-  const k = s.toLowerCase()
-  if (STATUS_COLOR[k]) return STATUS_COLOR[k]
-  if (k.startsWith('custom')) return 'bg-amber-100 text-amber-700'
-  return 'bg-slate-100 text-slate-500'
-}
-function isOnline(s: string) { return WORK_STATUSES.has(s.toLowerCase()) }
-function isPause(s: string) { const k = s.toLowerCase(); return !WORK_STATUSES.has(k) && !OFFLINE_STATUSES.has(k) }
-function isOffline(s: string) { return OFFLINE_STATUSES.has(s.toLowerCase()) }
 
 function withinWindow(entered: string, hours: number) {
   return Date.now() - new Date(entered).getTime() <= hours * 3600 * 1000
@@ -113,14 +35,14 @@ function minutesAgo(dt: string) {
   return m > 0 ? `${h}ч ${m}м назад` : `${h}ч назад`
 }
 
-function OpRow({ op, labelFn = statusLabel }: { op: CurrentOperator; labelFn?: (s: string) => string }) {
+function OpRow({ op, labelFn, colorFn }: { op: CurrentOperator; labelFn: (s: string) => string; colorFn: (s: string) => string }) {
   return (
     <div className="flex items-center justify-between px-4 py-3">
       <div className="min-w-0">
         <p className="text-sm font-medium text-slate-800 truncate">{op.employee_name || op.login}</p>
         <p className="text-xs text-slate-400">{op.login} · {minutesAgo(op.entered)}</p>
       </div>
-      <span className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ml-2 ${statusColor(op.status)}`}>
+      <span className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ml-2 ${colorFn(op.status)}`}>
         {labelFn(op.status)}
       </span>
     </div>
@@ -167,38 +89,7 @@ export default function LivePage() {
   const currentHour = new Date().getHours()
   const [lastRefreshed, setLastRefreshed] = useState(new Date())
 
-  const { data: statusConfigs } = useQuery({
-    queryKey: ['status-configs'],
-    queryFn: () => api.get('/status-configs').then((r) => r.data as Array<{ status_name: string; classification: string; label: string | null }>),
-    staleTime: 10 * 60 * 1000,
-  })
-
-  const customClassMap = useMemo(() => {
-    const m: Record<string, string> = {}
-    for (const c of statusConfigs || []) m[c.status_name.toLowerCase()] = c.classification
-    return m
-  }, [statusConfigs])
-
-  const customLabelMap = useMemo(() => {
-    const m: Record<string, string> = {}
-    for (const c of statusConfigs || []) if (c.label) m[c.status_name.toLowerCase()] = c.label
-    return m
-  }, [statusConfigs])
-
-  function classifyStatus(s: string): 'work' | 'pause' | 'offline' {
-    const k = s.toLowerCase()
-    if (WORK_STATUSES.has(k)) return 'work'
-    if (OFFLINE_STATUSES.has(k)) return 'offline'
-    if (customClassMap[k] === 'work') return 'work'
-    if (customClassMap[k] === 'offline') return 'offline'
-    return 'pause'
-  }
-
-  function statusLabelEx(s: string) {
-    const k = s.toLowerCase()
-    if (customLabelMap[k]) return customLabelMap[k]
-    return statusLabel(s)
-  }
+  const { classify, label: labelEx, color: colorEx } = useStatusClassifier(activeProject?.customer_uuid)
 
   const { data: currentOps, isLoading: loadingOps, refetch: refetchOps } = useQuery({
     queryKey: ['current-operators', activeProject?.customer_uuid],
@@ -255,18 +146,18 @@ export default function LivePage() {
   )
 
   const onlineOps = useMemo(
-    () => recentOps.filter((o) => classifyStatus(o.status) === 'work' && withinWindow(o.entered, STALE_ONLINE_H)),
-    [recentOps, customClassMap],
+    () => recentOps.filter((o) => classify(o.status) === 'work' && withinWindow(o.entered, STALE_ONLINE_H)),
+    [recentOps, classify],
   )
   const pauseOps = useMemo(
-    () => recentOps.filter((o) => classifyStatus(o.status) === 'pause'),
-    [recentOps, customClassMap],
+    () => recentOps.filter((o) => classify(o.status) === 'pause'),
+    [recentOps, classify],
   )
   const offlineOps = useMemo(
     () => recentOps.filter(
-      (o) => classifyStatus(o.status) === 'offline' || (classifyStatus(o.status) === 'work' && !withinWindow(o.entered, STALE_ONLINE_H)),
+      (o) => classify(o.status) === 'offline' || (classify(o.status) === 'work' && !withinWindow(o.entered, STALE_ONLINE_H)),
     ),
-    [recentOps, customClassMap],
+    [recentOps, classify],
   )
 
   const actualOnlineCount = onlineOps.length
@@ -346,7 +237,7 @@ export default function LivePage() {
             count={onlineOps.length}
             empty="Нет активных операторов"
           >
-            {onlineOps.map((op) => <OpRow key={op.login} op={op} labelFn={statusLabelEx} />)}
+            {onlineOps.map((op) => <OpRow key={op.login} op={op} labelFn={labelEx} colorFn={colorEx} />)}
           </Section>
 
           <Section
@@ -355,7 +246,7 @@ export default function LivePage() {
             count={pauseOps.length}
             empty="Никто не на паузе"
           >
-            {pauseOps.map((op) => <OpRow key={op.login} op={op} labelFn={statusLabelEx} />)}
+            {pauseOps.map((op) => <OpRow key={op.login} op={op} labelFn={labelEx} colorFn={colorEx} />)}
           </Section>
 
           <Section
@@ -364,7 +255,7 @@ export default function LivePage() {
             count={offlineOps.length}
             empty="Нет офлайн операторов"
           >
-            {offlineOps.map((op) => <OpRow key={op.login} op={op} labelFn={statusLabelEx} />)}
+            {offlineOps.map((op) => <OpRow key={op.login} op={op} labelFn={labelEx} colorFn={colorEx} />)}
           </Section>
 
           {/* Activity donut chart */}

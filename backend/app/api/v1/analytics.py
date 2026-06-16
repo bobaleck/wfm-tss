@@ -5,8 +5,9 @@ from datetime import date
 
 from app.api.deps import get_current_user, check_project_access
 from app.core.database import get_db
-from app.models.audit import IntegrationSettings, QueueSetting
+from app.models.audit import IntegrationSettings, QueueSetting, StatusConfig
 from app.models.employee import Employee
+from app.services.status_classification import build_status_sets
 import app.services.naumen_db as naumen
 
 router = APIRouter()
@@ -23,6 +24,13 @@ def _build_overrides(db: Session) -> Optional[dict]:
             "port": s.db_port,
         }
     return None
+
+
+def _status_sets(db: Session, partner_uuid: str) -> tuple[list[str], list[str]]:
+    """Рабочие/офлайн статусы для проекта — стандартные + индивидуальные настройки.
+    Та же классификация используется и в Онлайн-мониторинге, и в истории смен."""
+    configs = db.query(StatusConfig).filter(StatusConfig.project_uuid == partner_uuid).all()
+    return build_status_sets(configs)
 
 
 @router.get("/projects")
@@ -86,7 +94,10 @@ def get_operator_load(
     if end <= begin:
         raise HTTPException(400, detail="end должна быть больше begin")
     try:
-        data = naumen.get_operator_load(partner_uuid, str(begin), str(end), _build_overrides(db))
+        work_statuses, offline_statuses = _status_sets(db, partner_uuid)
+        data = naumen.get_operator_load(
+            partner_uuid, str(begin), str(end), work_statuses, offline_statuses, _build_overrides(db),
+        )
         return {"data": data, "meta": {"begin": str(begin), "end": str(end)}}
     except Exception as e:
         raise HTTPException(503, detail=str(e))
@@ -134,7 +145,10 @@ def get_operator_sessions(
         return {"data": [], "meta": {"logins_found": 0}}
 
     try:
-        rows = naumen.get_operator_sessions(logins, str(begin), str(end), _build_overrides(db))
+        work_statuses, offline_statuses = _status_sets(db, partner_uuid)
+        rows = naumen.get_operator_sessions(
+            logins, str(begin), str(end), work_statuses, offline_statuses, _build_overrides(db),
+        )
         for r in rows:
             r["employee_name"] = login_map.get(r.get("login"), r.get("login"))
         return {"data": rows, "meta": {"logins_found": len(logins), "begin": str(begin), "end": str(end)}}
