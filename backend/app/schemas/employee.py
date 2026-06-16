@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -52,11 +52,23 @@ class EmployeeSkillOut(BaseModel):
     class Config:
         from_attributes = True
 
+    @model_validator(mode="before")
+    @classmethod
+    def _from_orm_relation(cls, obj):
+        # EmployeeSkill (ORM) хранит только skill_id — название лежит в связанном
+        # Skill.name через relationship .skill, а не как собственный атрибут.
+        # Без этого from_attributes-валидация падает с "skill_name field required"
+        # для ЛЮБОГО сотрудника хоть с одним навыком и роняет весь список 500-кой.
+        if not isinstance(obj, dict) and hasattr(obj, "skill"):
+            return {"skill_id": obj.skill_id, "skill_name": obj.skill.name, "level": obj.level}
+        return obj
+
 
 class EmployeeOut(EmployeeBase):
     id: int
     created_at: datetime
     team_name: Optional[str] = None
+    added_manually: bool = False
     skills: List[EmployeeSkillOut] = []
 
     class Config:

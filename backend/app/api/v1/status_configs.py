@@ -55,8 +55,15 @@ def discover_statuses(partner_uuid: str, db: Session = Depends(get_db), _=Depend
         for c in db.query(StatusConfig).filter(StatusConfig.project_uuid == partner_uuid).all()
     }
 
+    # Уже сохранённые (ранее настроенные) статусы должны остаться на странице,
+    # даже если за последний lookback-период они не встречались у операторов —
+    # иначе при сокращении окна выгрузки (см. naumen.get_distinct_statuses_for_project)
+    # они бы пропадали из списка.
+    seen = {s.lower() for s in statuses}
+    all_names = list(statuses) + [c.status_name for c in configs.values() if c.status_name.lower() not in seen]
+
     result = []
-    for status_name in statuses:
+    for status_name in all_names:
         cfg = configs.get(status_name.lower())
         std = is_standard(status_name)
         result.append({

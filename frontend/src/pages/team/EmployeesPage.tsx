@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Search, Pencil, Trash2, UserCheck, Save, RefreshCw, Loader2,
-  ChevronDown, ChevronRight, X, Clock4, Eye, EyeOff,
+  ChevronDown, ChevronRight, X, Clock4, AlertCircle, Award, Filter,
 } from 'lucide-react'
 import api from '@/api/client'
 import type { Employee, Skill } from '@/types'
@@ -200,6 +200,71 @@ function QuickShiftModal({ employee, onClose }: { employee: Employee; onClose: (
   )
 }
 
+// ─── Навыки сотрудника (модалка по кнопке "Навыки") ─────────────────────────
+function SkillsModal({ employee, allSkills, onClose }: { employee: Employee; allSkills: Skill[]; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [addSkillId, setAddSkillId] = useState<number | ''>('')
+  const [skillError, setSkillError] = useState<string | null>(null)
+
+  const addSkillMutation = useMutation({
+    mutationFn: (skillId: number) =>
+      api.put(`/employees/${employee.id}`, { skill_ids: [...employee.skills.map((s) => s.skill_id), skillId] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees'] }); setAddSkillId(''); setSkillError(null) },
+    onError: (e: any) => setSkillError(e.response?.data?.detail || 'Ошибка при добавлении навыка'),
+  })
+
+  const removeSkillMutation = useMutation({
+    mutationFn: (skillId: number) =>
+      api.put(`/employees/${employee.id}`, { skill_ids: employee.skills.filter((s) => s.skill_id !== skillId).map((s) => s.skill_id) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees'] }); setSkillError(null) },
+    onError: (e: any) => setSkillError(e.response?.data?.detail || 'Ошибка при удалении навыка'),
+  })
+
+  const availableSkills = allSkills.filter((s) => !employee.skills.some((es) => es.skill_id === s.id))
+
+  return (
+    <div>
+      <p className="text-sm font-medium text-slate-800 mb-3">{employee.full_name}</p>
+      {skillError && <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1 mb-2">{skillError}</p>}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {employee.skills.length === 0 && <span className="text-xs text-slate-400">Навыки не назначены</span>}
+        {employee.skills.map((s) => (
+          <span key={s.skill_id} className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs">
+            {s.skill_name}
+            <button onClick={() => removeSkillMutation.mutate(s.skill_id)} className="hover:text-red-600 ml-0.5">
+              <X size={11} />
+            </button>
+          </span>
+        ))}
+      </div>
+      {availableSkills.length > 0 && (
+        <div className="flex gap-2">
+          <select
+            className="input text-sm flex-1"
+            value={addSkillId}
+            onChange={(e) => setAddSkillId(e.target.value ? +e.target.value : '')}
+          >
+            <option value="">+ добавить навык...</option>
+            {availableSkills.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          {addSkillId !== '' && (
+            <button
+              onClick={() => addSkillMutation.mutate(+addSkillId)}
+              disabled={addSkillMutation.isPending}
+              className="px-3 py-1.5 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 disabled:opacity-50"
+            >
+              {addSkillMutation.isPending ? '...' : 'ОК'}
+            </button>
+          )}
+        </div>
+      )}
+      <div className="flex justify-end pt-4">
+        <button onClick={onClose} className="btn-secondary">Закрыть</button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Строка сотрудника с раскрытием ─────────────────────────────────────────
 function EmployeeRow({
   emp,
@@ -208,7 +273,9 @@ function EmployeeRow({
   onEdit,
   onDelete,
   onShift,
-  allSkills,
+  onSkills,
+  selected,
+  onSelectToggle,
 }: {
   emp: Employee
   expanded: boolean
@@ -216,27 +283,15 @@ function EmployeeRow({
   onEdit: (e: Employee) => void
   onDelete: (e: Employee) => void
   onShift: (e: Employee) => void
-  allSkills: Skill[]
+  onSkills: (e: Employee) => void
+  selected: boolean
+  onSelectToggle: () => void
 }) {
   const qc = useQueryClient()
-  const [addSkillId, setAddSkillId] = useState<number | ''>('')
-  const [skillError, setSkillError] = useState<string | null>(null)
-
-  const addSkillMutation = useMutation({
-    mutationFn: (skillId: number) =>
-      api.put(`/employees/${emp.id}`, { skill_ids: [...emp.skills.map((s) => s.skill_id), skillId] }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees'] }); setAddSkillId(''); setSkillError(null) },
-    onError: (e: any) => setSkillError(e.response?.data?.detail || 'Ошибка при добавлении навыка'),
+  const statusMutation = useMutation({
+    mutationFn: (employment_status: string) => api.put(`/employees/${emp.id}`, { employment_status }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['employees'] }),
   })
-
-  const removeSkillMutation = useMutation({
-    mutationFn: (skillId: number) =>
-      api.put(`/employees/${emp.id}`, { skill_ids: emp.skills.filter((s) => s.skill_id !== skillId).map((s) => s.skill_id) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees'] }); setSkillError(null) },
-    onError: (e: any) => setSkillError(e.response?.data?.detail || 'Ошибка при удалении навыка'),
-  })
-
-  const availableSkills = allSkills.filter((s) => !emp.skills.some((es) => es.skill_id === s.id))
 
   return (
     <>
@@ -244,6 +299,9 @@ function EmployeeRow({
         className={`border-b border-slate-50 hover:bg-slate-50 transition-colors cursor-pointer ${expanded ? 'bg-slate-50' : ''}`}
         onClick={onToggle}
       >
+        <td className="px-4 py-3 w-6" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" checked={selected} onChange={onSelectToggle} className="rounded border-slate-300" />
+        </td>
         <td className="px-4 py-3 text-slate-400 w-6">
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </td>
@@ -257,6 +315,7 @@ function EmployeeRow({
         <td className="px-4 py-3 text-slate-400 font-mono text-xs">{emp.naumen_login || '—'}</td>
         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1 justify-end">
+            <button onClick={() => onSkills(emp)} className="p-1.5 hover:bg-purple-50 rounded-lg text-slate-400 hover:text-purple-600" title="Навыки"><Award size={13} /></button>
             <button onClick={() => onShift(emp)} className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600" title="Поставить смену"><Clock4 size={13} /></button>
             <button onClick={() => onEdit(emp)} className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600" title="Редактировать"><Pencil size={13} /></button>
             <button onClick={() => onDelete(emp)} className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600" title="Удалить"><Trash2 size={13} /></button>
@@ -266,10 +325,10 @@ function EmployeeRow({
 
       {expanded && (
         <tr className="border-b border-slate-100">
-          <td colSpan={8} className="px-6 py-4 bg-slate-50">
-            <div className="flex flex-wrap gap-6">
+          <td colSpan={9} className="px-6 py-4 bg-slate-50">
+            <div className="flex flex-wrap gap-10">
               {/* Контактная информация */}
-              <div className="min-w-[180px] flex-1">
+              <div className="min-w-[220px]">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Контакты</p>
                 <div className="space-y-1.5 text-sm">
                   {[['Email', emp.email], ['Телефон', emp.phone], ['Naumen', emp.naumen_login]].map(([label, val]) => (
@@ -282,53 +341,45 @@ function EmployeeRow({
               </div>
 
               {/* Навыки */}
-              <div className="min-w-[220px] flex-[2]">
+              <div className="min-w-[200px]">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Навыки</p>
-                {skillError && (
-                  <p className="text-xs text-red-600 bg-red-50 rounded px-2 py-1 mb-2">{skillError}</p>
-                )}
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {emp.skills.length === 0 && <span className="text-xs text-slate-400">Навыки не назначены</span>}
-                  {emp.skills.map((s) => (
-                    <span key={s.skill_id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs">
-                      {s.skill_name}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); removeSkillMutation.mutate(s.skill_id) }}
-                        className="hover:text-red-600 ml-0.5"
-                      >
-                        <X size={10} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                {availableSkills.length > 0 && (
-                  <div className="flex gap-2">
-                    <select
-                      className="input text-xs py-1 h-7 flex-1"
-                      value={addSkillId}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => { e.stopPropagation(); setAddSkillId(e.target.value ? +e.target.value : '') }}
-                    >
-                      <option value="">+ добавить навык...</option>
-                      {availableSkills.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                    {addSkillId !== '' && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); addSkillMutation.mutate(+addSkillId) }}
-                        disabled={addSkillMutation.isPending}
-                        className="px-2 py-1 bg-purple-600 text-white text-xs rounded-lg hover:bg-purple-700 disabled:opacity-50"
-                      >
-                        {addSkillMutation.isPending ? '...' : 'ОК'}
-                      </button>
-                    )}
+                {emp.skills.length === 0 ? (
+                  <p className="text-xs text-slate-400">Навыки не назначены</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5 max-w-[260px]">
+                    {emp.skills.map((s) => (
+                      <span key={s.skill_id} className="badge-purple">{s.skill_name}</span>
+                    ))}
                   </div>
                 )}
               </div>
 
+              {/* Статус занятости */}
+              <div className="min-w-[180px]">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Статус занятости</p>
+                <select
+                  className="input text-sm"
+                  value={emp.employment_status}
+                  disabled={statusMutation.isPending}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => { e.stopPropagation(); statusMutation.mutate(e.target.value) }}
+                >
+                  <option value="new">Новый</option>
+                  <option value="active">Работает</option>
+                  <option value="fired">Уволен</option>
+                </select>
+              </div>
+
               {/* Быстрые действия */}
-              <div className="min-w-[160px]">
+              <div className="min-w-[180px]">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Действия</p>
                 <div className="flex flex-col gap-2">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onSkills(emp) }}
+                    className="flex items-center gap-2 px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-xs font-medium transition-colors"
+                  >
+                    <Award size={13} /> Навыки
+                  </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); onShift(emp) }}
                     className="flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-medium transition-colors"
@@ -353,30 +404,70 @@ function EmployeeRow({
 
 type EmpSortKey = 'full_name' | 'employment_status' | 'team_name' | 'position' | 'preferred_schedule' | 'naumen_login'
 
+const STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: 'new', label: 'Новые' },
+  { value: 'active', label: 'Работают' },
+  { value: 'fired', label: 'Уволены' },
+]
+
 // ─── Главная страница сотрудников ────────────────────────────────────────────
 export default function EmployeesPage() {
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [hideFired, setHideFired] = useState(true)
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(['new', 'active']))
+  const [statusFilterOpen, setStatusFilterOpen] = useState(false)
+  const statusFilterRef = useRef<HTMLDivElement>(null)
   const [showForm, setShowForm] = useState(false)
   const [editEmployee, setEditEmployee] = useState<Employee | null>(null)
   const [shiftEmployee, setShiftEmployee] = useState<Employee | null>(null)
+  const [skillsEmployee, setSkillsEmployee] = useState<Employee | null>(null)
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<EmpSortKey>('full_name')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [skillFilter, setSkillFilter] = useState<Set<number>>(new Set())
+  const [skillFilterOpen, setSkillFilterOpen] = useState(false)
+  const [bulkStatus, setBulkStatus] = useState('')
+  const [bulkApplying, setBulkApplying] = useState(false)
+  const skillFilterRef = useRef<HTMLDivElement>(null)
   const qc = useQueryClient()
   const { activeProject } = useProjectStore()
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['employees', activeProject?.customer_uuid, search, statusFilter],
+  useEffect(() => {
+    if (!skillFilterOpen) return
+    const handler = (e: MouseEvent) => {
+      if (skillFilterRef.current && !skillFilterRef.current.contains(e.target as Node)) setSkillFilterOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [skillFilterOpen])
+
+  useEffect(() => {
+    if (!statusFilterOpen) return
+    const handler = (e: MouseEvent) => {
+      if (statusFilterRef.current && !statusFilterRef.current.contains(e.target as Node)) setStatusFilterOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [statusFilterOpen])
+
+  const allStatusesSelected = statusFilter.size === STATUS_OPTIONS.length
+  const toggleAllStatuses = () => setStatusFilter(allStatusesSelected ? new Set() : new Set(STATUS_OPTIONS.map((o) => o.value)))
+  const toggleStatus = (value: string) =>
+    setStatusFilter((prev) => {
+      const n = new Set(prev)
+      n.has(value) ? n.delete(value) : n.add(value)
+      return n
+    })
+
+  const { data, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['employees', activeProject?.customer_uuid, search],
     queryFn: () =>
       api.get('/employees', {
         params: {
           project_uuid: activeProject?.customer_uuid || undefined,
           search: search || undefined,
-          employment_status: statusFilter || undefined,
           limit: 300,
         },
       }).then((r) => r.data as Employee[]),
@@ -405,20 +496,50 @@ export default function EmployeesPage() {
     }
   }
 
+  const handleBulkStatusApply = async (ids: number[]) => {
+    if (!bulkStatus || !ids.length) return
+    setBulkApplying(true)
+    try {
+      for (const id of ids) {
+        await api.put(`/employees/${id}`, { employment_status: bulkStatus })
+      }
+      qc.invalidateQueries({ queryKey: ['employees'] })
+      setSelectedIds(new Set())
+      setBulkStatus('')
+    } finally {
+      setBulkApplying(false)
+    }
+  }
+
   const handleSync = async () => {
     if (!activeProject) return
+    const projectUuid = activeProject.customer_uuid
     setSyncing(true); setSyncResult(null)
     try {
-      const res = await api.post('/employees/sync-naumen', null, {
-        params: { project_uuid: activeProject.customer_uuid },
-      })
-      const { added, fired_auto, deleted_stale, total_from_naumen, active_in_30d } = res.data
-      setSyncResult(
-        `Из Naumen получено: ${total_from_naumen}, активны за 30 дней: ${active_in_30d}. ` +
-        `Добавлено: ${added}. Помечено уволенными: ${fired_auto}. ` +
-        `Удалено (неактивны 6+ мес.): ${deleted_stale ?? 0}.`
-      )
-      qc.invalidateQueries({ queryKey: ['employees'] })
+      // Для крупного проекта (300+ операторов) синхронизация в Naumen может идти
+      // несколько минут — backend запускает её в фоне и сразу отвечает, а мы
+      // опрашиваем статус. Так не нужен длинный HTTP-таймаут и не держится поток.
+      await api.post('/employees/sync-naumen', null, { params: { project_uuid: projectUuid } })
+
+      while (true) {
+        await new Promise((r) => setTimeout(r, 3000))
+        const { data: job } = await api.get('/employees/sync-naumen/status', { params: { project_uuid: projectUuid } })
+        if (job.status === 'done') {
+          const { added, reactivated, fired_auto, deleted_stale, total_from_naumen, active_in_30d } = job.result
+          setSyncResult(
+            `Из Naumen получено: ${total_from_naumen}, активны за 30 дней: ${active_in_30d}. ` +
+            `Добавлено: ${added}. Реактивировано: ${reactivated ?? 0}. Помечено уволенными: ${fired_auto}. ` +
+            `Удалено (неактивны 3+ мес.): ${deleted_stale ?? 0}.`
+          )
+          qc.invalidateQueries({ queryKey: ['employees'] })
+          break
+        }
+        if (job.status === 'error') {
+          setSyncResult(`Ошибка: ${job.error}`)
+          break
+        }
+        // status === 'running' — продолжаем опрос
+      }
     } catch (e: any) {
       setSyncResult(`Ошибка: ${e.response?.data?.detail || e.message}`)
     } finally { setSyncing(false) }
@@ -429,7 +550,14 @@ export default function EmployeesPage() {
     else { setSortKey(key); setSortDir('asc') }
   }
 
-  const displayData = [...(data || []).filter((emp) => !hideFired || emp.employment_status !== 'fired')]
+  const displayData = [...(data || []).filter((emp) => {
+      if (!statusFilter.has(emp.employment_status)) return false
+      if (skillFilter.size > 0) {
+        const empSkillIds = new Set(emp.skills.map((s) => s.skill_id))
+        for (const sid of skillFilter) if (!empSkillIds.has(sid)) return false
+      }
+      return true
+    })]
     .sort((a, b) => {
       const av = (a as any)[sortKey] ?? ''
       const bv = (b as any)[sortKey] ?? ''
@@ -443,7 +571,7 @@ export default function EmployeesPage() {
     <div>
       <PageHeader
         title="Сотрудники"
-        subtitle={`Всего: ${displayData.length}${hideFired && (data || []).some(e => e.employment_status === 'fired') ? ` (скрыто уволенных: ${(data || []).filter(e => e.employment_status === 'fired').length})` : ''}`}
+        subtitle={`Всего: ${displayData.length}`}
         actions={
           <div className="flex items-center gap-2">
             {activeProject && (
@@ -469,19 +597,72 @@ export default function EmployeesPage() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input className="input pl-9" placeholder="Поиск по имени..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <div>
+        <div className="relative" ref={statusFilterRef}>
           <label className="label">Статус</label>
-          <select className="input w-44" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="">Все</option><option value="new">Новые</option><option value="active">Работают</option><option value="fired">Уволены</option>
-          </select>
+          <button
+            onClick={() => setStatusFilterOpen((v) => !v)}
+            className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors w-44"
+          >
+            <span className="truncate">
+              {allStatusesSelected
+                ? 'Все статусы'
+                : statusFilter.size === 0
+                ? 'Не выбрано'
+                : STATUS_OPTIONS.filter((o) => statusFilter.has(o.value)).map((o) => o.label).join(', ')}
+            </span>
+            <ChevronDown size={14} className="flex-shrink-0 text-slate-400" />
+          </button>
+          {statusFilterOpen && (
+            <div className="absolute z-10 top-full mt-1 left-0 w-48 bg-white border border-slate-200 rounded-lg shadow-lg p-2">
+              <label className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-sm font-medium border-b border-slate-100 mb-1 pb-2">
+                <input type="checkbox" checked={allStatusesSelected} onChange={toggleAllStatuses} />
+                Все
+              </label>
+              {STATUS_OPTIONS.map((o) => (
+                <label key={o.value} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-sm">
+                  <input type="checkbox" checked={statusFilter.has(o.value)} onChange={() => toggleStatus(o.value)} />
+                  {o.label}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
-        <button
-          onClick={() => setHideFired(!hideFired)}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${hideFired ? 'border-slate-200 bg-slate-100 text-slate-600' : 'border-red-200 bg-red-50 text-red-600'}`}
-        >
-          {hideFired ? <EyeOff size={14} /> : <Eye size={14} />}
-          {hideFired ? 'Уволенные скрыты' : 'Показать всех'}
-        </button>
+        <div className="relative" ref={skillFilterRef}>
+          <button
+            onClick={() => setSkillFilterOpen((v) => !v)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${skillFilter.size > 0 ? 'border-purple-200 bg-purple-50 text-purple-700' : 'border-slate-200 bg-white text-slate-600'}`}
+          >
+            <Filter size={14} />
+            Навыки{skillFilter.size > 0 ? ` (${skillFilter.size})` : ''}
+          </button>
+          {skillFilterOpen && (
+            <div className="absolute z-10 top-full mt-1 left-0 w-56 bg-white border border-slate-200 rounded-lg shadow-lg p-2 max-h-72 overflow-y-auto">
+              {(allSkills || []).length === 0 && <p className="text-xs text-slate-400 px-2 py-1">Нет навыков</p>}
+              {(allSkills || []).map((s) => (
+                <label key={s.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={skillFilter.has(s.id)}
+                    onChange={() =>
+                      setSkillFilter((prev) => {
+                        const n = new Set(prev)
+                        n.has(s.id) ? n.delete(s.id) : n.add(s.id)
+                        return n
+                      })
+                    }
+                    className="rounded border-slate-300"
+                  />
+                  {s.name}
+                </label>
+              ))}
+              {skillFilter.size > 0 && (
+                <button onClick={() => setSkillFilter(new Set())} className="w-full text-left text-xs text-slate-400 hover:text-slate-600 px-2 py-1.5 mt-1 border-t border-slate-100">
+                  Очистить
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         {newEmployees.length > 0 && (
           <button
             onClick={() => {
@@ -498,10 +679,42 @@ export default function EmployeesPage() {
         )}
       </div>
 
+      {selectedIds.size > 0 && (
+        <div className="card p-3 mb-4 flex items-center gap-3 bg-brand-50 border-brand-100">
+          <span className="text-sm font-medium text-slate-700">Выбрано: {selectedIds.size}</span>
+          <select className="input w-44" value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}>
+            <option value="">Сменить статус...</option>
+            <option value="new">Новый</option>
+            <option value="active">Работает</option>
+            <option value="fired">Уволен</option>
+          </select>
+          <button
+            className="btn-secondary"
+            disabled={!bulkStatus || bulkApplying}
+            onClick={() => handleBulkStatusApply(displayData.filter((e) => selectedIds.has(e.id)).map((e) => e.id))}
+          >
+            {bulkApplying ? <Loader2 size={14} className="animate-spin" /> : null}
+            Применить
+          </button>
+          <button className="text-sm text-slate-400 hover:text-slate-600" onClick={() => setSelectedIds(new Set())}>
+            Отменить выбор
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="card overflow-hidden">
         {isLoading ? (
           <PageSpinner />
+        ) : isError ? (
+          <div className="p-8 flex items-center gap-4 bg-red-50">
+            <AlertCircle size={20} className="text-red-500 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-red-800 font-medium">Не удалось загрузить список сотрудников</p>
+              <p className="text-red-600 text-sm mt-0.5">{(error as any)?.response?.data?.detail || (error as any)?.message || 'Неизвестная ошибка'}</p>
+            </div>
+            <button className="btn-secondary" onClick={() => refetch()}><RefreshCw size={14} /> Повторить</button>
+          </div>
         ) : !displayData.length ? (
           <EmptyState
             title="Нет сотрудников"
@@ -514,6 +727,20 @@ export default function EmployeesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="w-6 px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={displayData.length > 0 && displayData.every((e) => selectedIds.has(e.id))}
+                      onChange={() =>
+                        setSelectedIds((prev) => {
+                          const allSelected = displayData.length > 0 && displayData.every((e) => prev.has(e.id))
+                          if (allSelected) return new Set()
+                          return new Set(displayData.map((e) => e.id))
+                        })
+                      }
+                      className="rounded border-slate-300"
+                    />
+                  </th>
                   <th className="w-6 px-4 py-3" />
                   {([
                     { label: 'ФИО', key: 'full_name' },
@@ -549,7 +776,15 @@ export default function EmployeesPage() {
                     onEdit={setEditEmployee}
                     onDelete={(e) => confirm(`Удалить сотрудника ${e.full_name}?`) && deleteMutation.mutate(e.id)}
                     onShift={setShiftEmployee}
-                    allSkills={allSkills || []}
+                    onSkills={setSkillsEmployee}
+                    selected={selectedIds.has(emp.id)}
+                    onSelectToggle={() =>
+                      setSelectedIds((prev) => {
+                        const n = new Set(prev)
+                        n.has(emp.id) ? n.delete(emp.id) : n.add(emp.id)
+                        return n
+                      })
+                    }
                   />
                 ))}
               </tbody>
@@ -561,6 +796,15 @@ export default function EmployeesPage() {
       {showForm && <Modal open title="Новый сотрудник" onClose={() => setShowForm(false)}><EmployeeForm onClose={() => setShowForm(false)} /></Modal>}
       {editEmployee && <Modal open title="Редактировать сотрудника" onClose={() => setEditEmployee(null)}><EmployeeForm employee={editEmployee} onClose={() => setEditEmployee(null)} /></Modal>}
       {shiftEmployee && <Modal open title={`Смена — ${shiftEmployee.full_name}`} onClose={() => setShiftEmployee(null)}><QuickShiftModal employee={shiftEmployee} onClose={() => setShiftEmployee(null)} /></Modal>}
+      {skillsEmployee && (
+        <Modal open title="Навыки сотрудника" onClose={() => setSkillsEmployee(null)}>
+          <SkillsModal
+            employee={(data || []).find((e) => e.id === skillsEmployee.id) || skillsEmployee}
+            allSkills={allSkills || []}
+            onClose={() => setSkillsEmployee(null)}
+          />
+        </Modal>
+      )}
     </div>
   )
 }

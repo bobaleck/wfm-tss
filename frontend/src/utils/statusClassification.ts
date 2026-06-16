@@ -85,6 +85,17 @@ export const STANDARD_OFFLINE = new Set([
   'away', 'notavailable', 'not_available',
 ])
 
+// Если оператор дольше WRAPUP_STALE_SEC сидит в статусе "После звонка" —
+// считаем это паузой (а не работой) и подсвечиваем красным. Та же логика
+// применяется на backend для агрегатов (см. status_classification.py).
+export const WRAPUP_STATUSES = new Set(['wrapup', 'wrapup#voice', 'acw'])
+export const WRAPUP_STALE_SEC = 600
+
+export function isStaleWrapup(status: string, durationSec?: number): boolean {
+  if (durationSec == null) return false
+  return WRAPUP_STATUSES.has(status.toLowerCase()) && durationSec > WRAPUP_STALE_SEC
+}
+
 export function isStandardStatus(status: string): boolean {
   const k = status.toLowerCase()
   return STANDARD_WORK.has(k) || STANDARD_PAUSE.has(k) || STANDARD_OFFLINE.has(k)
@@ -99,9 +110,9 @@ export function standardGroup(status: string): StatusGroup | null {
 }
 
 export interface StatusClassifier {
-  classify: (status: string) => StatusGroup
-  label: (status: string) => string
-  color: (status: string) => string
+  classify: (status: string, durationSec?: number) => StatusGroup
+  label: (status: string, durationSec?: number) => string
+  color: (status: string, durationSec?: number) => string
 }
 
 export function buildClassifier(configs: StatusConfigItem[] | undefined): StatusClassifier {
@@ -112,23 +123,23 @@ export function buildClassifier(configs: StatusConfigItem[] | undefined): Status
     if (c.label) labelMap[c.status_name.toLowerCase()] = c.label
   }
 
-  function classify(status: string): StatusGroup {
+  function classify(status: string, durationSec?: number): StatusGroup {
     const k = status.toLowerCase()
+    if (isStaleWrapup(k, durationSec)) return 'pause'
     const std = standardGroup(k)
     if (std) return std
     return classMap[k] || 'pause'
   }
 
-  function label(status: string): string {
+  function label(status: string, durationSec?: number): string {
     const k = status.toLowerCase()
-    if (labelMap[k]) return labelMap[k]
-    if (STANDARD_LABEL[k]) return STANDARD_LABEL[k]
-    if (k.startsWith('custom')) return `Перерыв (${status})`
-    return status
+    const base = labelMap[k] || STANDARD_LABEL[k] || (k.startsWith('custom') ? `Перерыв (${status})` : status)
+    return isStaleWrapup(k, durationSec) ? `${base} (просрочено)` : base
   }
 
-  function color(status: string): string {
+  function color(status: string, durationSec?: number): string {
     const k = status.toLowerCase()
+    if (isStaleWrapup(k, durationSec)) return 'bg-red-100 text-red-700 ring-1 ring-red-300'
     if (STANDARD_COLOR[k]) return STANDARD_COLOR[k]
     if (k.startsWith('custom')) return 'bg-amber-100 text-amber-700'
     return 'bg-slate-100 text-slate-500'

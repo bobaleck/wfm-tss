@@ -9,7 +9,10 @@ from app.core.config import settings
 
 
 def _get_conn(overrides: Optional[dict] = None):
-    """Открывает соединение с Naumen PostgreSQL."""
+    """Открывает соединение с Naumen PostgreSQL.
+    statement_timeout ограничивает любой отдельный запрос — без него медленный/
+    зависший запрос держит соединение (и поток FastAPI) неограниченно долго и
+    забирает свободные слоты у других вкладок/запросов."""
     cfg = {
         "host": settings.NCC_DB_HOST,
         "database": settings.NCC_DB_NAME,
@@ -26,10 +29,16 @@ def _get_conn(overrides: Optional[dict] = None):
     return psycopg2.connect(**cfg, cursor_factory=psycopg2.extras.RealDictCursor)
 
 
-def _execute(query: str, params: dict = None, overrides: dict = None) -> list[dict]:
+def _execute(query: str, params: dict = None, overrides: dict = None, timeout_ms: int = 20000) -> list[dict]:
     conn = _get_conn(overrides)
     try:
         with conn.cursor() as cur:
+            # statement_timeout через SQL SET, а не startup-параметр options=-c —
+            # перед nccrep стоит пулер соединений (PgBouncer), который отвечает
+            # "unsupported startup parameter" на произвольные -c options.
+            # SET не поддерживает параметризацию через execute(..., params) — timeout_ms
+            # это int из кода (не пользовательский ввод), поэтому форматируем напрямую.
+            cur.execute(f"SET statement_timeout = {int(timeout_ms)}")
             cur.execute(query, params or {})
             return [dict(row) for row in cur.fetchall()]
     finally:
@@ -184,12 +193,15 @@ def get_operator_load(partner_uuid: str, begin_date: str, end_date: str,
                           cl_rd.dst_id, cl_rd.dst_abonent)
     ),
     status_summary AS (
-        -- idle_sec = время в статусах "На паузе" — той же классификации, что и в Онлайн/Сменах
+        -- idle_sec = время в статусах "На паузе" — той же классификации, что и в Онлайн/Сменах.
+        -- "После звонка" дольше %(wrapup_stale_sec)s сек считается паузой, а не работой —
+        -- иначе операторы зависают в нём вместо паузы и это не попадает в простой.
         SELECT
             sc.login,
             ROUND(SUM(COALESCE(sc.duration, 0)) FILTER (
                 WHERE NOT (lower(sc.status) = ANY(%(work_statuses)s)
                        OR  lower(sc.status) = ANY(%(offline_statuses)s))
+                   OR (lower(sc.status) = ANY(%(wrapup_statuses)s) AND sc.duration > %(wrapup_stale_sec)s)
             )::numeric, 0) AS idle_sec
         FROM status_changes sc
         WHERE sc.entered >= %(begin_date)s::timestamp
@@ -211,13 +223,15 @@ def get_operator_load(partner_uuid: str, begin_date: str, end_date: str,
     LEFT JOIN status_summary ss ON ss.login = oc.login
     ORDER BY oc.handled_calls DESC
     """
-    from app.services.status_classification import STANDARD_WORK, STANDARD_OFFLINE
+    from app.services.status_classification import STANDARD_WORK, STANDARD_OFFLINE, WRAPUP_STATUSES, WRAPUP_STALE_SEC
     params = {
         "partner_uuid": partner_uuid,
         "begin_date": begin_date,
         "end_date": end_date,
         "work_statuses": work_statuses if work_statuses is not None else list(STANDARD_WORK),
         "offline_statuses": offline_statuses if offline_statuses is not None else list(STANDARD_OFFLINE),
+        "wrapup_statuses": list(WRAPUP_STATUSES),
+        "wrapup_stale_sec": WRAPUP_STALE_SEC,
     }
     return _execute(query, params, overrides)
 
@@ -264,12 +278,34 @@ def get_status_summary(partner_uuid: str, begin_date: str, end_date: str,
     return _execute(query, {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}, overrides)
 
 
-def get_distinct_statuses_for_project(partner_uuid: str, overrides: dict = None) -> list[str]:
-    """Все уникальные статусы, встречавшиеся у операторов проекта за последние 180 дней.
-    Используется страницей "Статусы" для автообнаружения кастомных статусов (Custom1 и т.п.)."""
+def get_distinct_statuses_for_project(partner_uuid: str, overrides: dict = None,
+                                       lookback_days: int = 3, sample_logins: int = 40) -> list[str]:
+    """Все уникальные статусы, встречавшиеся у операторов проекта за последние
+    lookback_days дней. Используется страницей "Статусы" для автообнаружения
+    кастомных статусов (Custom1 и т.п.).
+
+    lookback_days=3: статус, которым не воспользовался НИ ОДИН оператор за
+    последние трое суток, в выборку не попадёт — но он либо уже сохранён в
+    StatusConfig (и подмешивается в discover_statuses независимо от lookback,
+    см. status_configs.py) и не пропадёт со страницы, либо реально не
+    используется и не нужен. Пользователь может в любой момент нажать
+    "Обновить из Naumen" — свежий запрос подтянет новые статусы, а уже
+    настроенные останутся как есть (сопоставление по имени).
+
+    Раньше JOIN со status_changes шёл по ВСЕМ логинам проекта за период — для
+    крупных проектов (тысячи операторов, напр. X5) это означало сканирование
+    статусной истории всех операторов за весь период просто чтобы собрать
+    набор уникальных НАЗВАНИЙ статусов, которых физически не больше пары
+    десятков. Палитра кастомных статусов (Custom1, Custom2 и т.п.) задаётся
+    в Naumen на уровне проекта/группы, а не индивидуально для каждого
+    оператора — поэтому достаточно посмотреть статусы небольшой выборки
+    недавно активных операторов (sample_logins), а не всех. Это сокращает
+    стоимость JOIN с O(операторы × дни) до O(sample_logins × дни) и делает
+    запрос быстрым независимо от размера проекта, а не просто обрезает его
+    по таймауту."""
     query = """
     WITH project_logins AS (
-        SELECT DISTINCT COALESCE(cl.dst_id, cl.dst_abonent) AS login
+        SELECT COALESCE(cl.dst_id, cl.dst_abonent) AS login
         FROM queued_calls_ms que
         JOIN mv_incoming_call_project icp ON icp.uuid = que.project_id
         LEFT JOIN call_legs cl ON cl.session_id = que.session_id
@@ -277,16 +313,23 @@ def get_distinct_statuses_for_project(partner_uuid: str, overrides: dict = None)
         WHERE icp.partneruuid = %(partner_uuid)s
           AND icp.removed = false
           AND que.final_stage = 'operator'
-          AND que.enqueued_time >= now() - INTERVAL '180 days'
+          AND que.enqueued_time >= now() - make_interval(days => %(lookback_days)s)
           AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
+        GROUP BY COALESCE(cl.dst_id, cl.dst_abonent)
+        ORDER BY MAX(que.enqueued_time) DESC
+        LIMIT %(sample_logins)s
     )
     SELECT DISTINCT sc.status AS status
     FROM status_changes sc
     JOIN project_logins pl ON pl.login = sc.login
-    WHERE sc.entered >= now() - INTERVAL '180 days'
+    WHERE sc.entered >= now() - make_interval(days => %(lookback_days)s)
     ORDER BY sc.status
     """
-    result = _execute(query, {"partner_uuid": partner_uuid}, overrides)
+    result = _execute(query, {
+        "partner_uuid": partner_uuid,
+        "lookback_days": lookback_days,
+        "sample_logins": sample_logins,
+    }, overrides)
     return [row["status"] for row in result]
 
 
@@ -332,29 +375,62 @@ def get_naumen_employees(partner_uuid: str, begin_date: str, end_date: str,
 
 
 def sync_employees_for_partner(partner_uuid: str, overrides: dict = None) -> list[dict]:
-    """Get all operators who worked on a project in the last 365 days (for DB sync)."""
+    """Все операторы, работавшие на проекте за последние 90 дней, + флаги
+    активности за 30 и 90 дней — за ОДИН проход по queued_calls_ms.
+
+    Окно сужено с 365 до 90 дней: бизнес-правила синхронизации (см.
+    employees.py _run_sync) больше не добавляют и не "воскрешают" сотрудников,
+    не отвечавших дольше 3 месяцев, поэтому данные старше 90 дней для решений
+    о синхронизации не нужны — а более узкое окно меньше нагружает Naumen и
+    снижает риск statement_timeout на крупных проектах (X5, 300+ операторов)."""
     from datetime import date, timedelta
-    begin = (date.today() - timedelta(days=365)).isoformat()
-    end = date.today().isoformat()
-    return get_naumen_employees(partner_uuid, begin, end, overrides)
-
-
-def get_active_logins_since(partner_uuid: str, cutoff_date: str, overrides: dict = None) -> set:
-    """Логины операторов, имевших активность по проекту начиная с cutoff_date."""
     query = """
-    SELECT DISTINCT COALESCE(cl.dst_id, cl.dst_abonent) AS login
-    FROM queued_calls_ms que
-    JOIN mv_incoming_call_project icp ON icp.uuid = que.project_id
-    LEFT JOIN call_legs cl ON cl.session_id = que.session_id
-                           AND cl.leg_id = que.next_leg_id
-    WHERE icp.partneruuid = %(partner_uuid)s
-      AND icp.removed = false
-      AND que.final_stage = 'operator'
-      AND que.enqueued_time >= %(cutoff_date)s::timestamp
-      AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
+    WITH active_queues AS (
+        SELECT uuid AS q_uuid
+        FROM mv_incoming_call_project
+        WHERE partneruuid = %(partner_uuid)s AND removed = false
+    ),
+    handled AS (
+        SELECT
+            COALESCE(cl.dst_id, cl.dst_abonent) AS login,
+            COUNT(*)                             AS handled_calls,
+            COUNT(DISTINCT aq.q_uuid)            AS queues_count,
+            MAX(que.enqueued_time)                AS last_activity
+        FROM queued_calls_ms que
+        JOIN active_queues aq ON aq.q_uuid = que.project_id
+        LEFT JOIN call_legs cl ON cl.session_id = que.session_id
+                               AND cl.leg_id = que.next_leg_id
+        WHERE que.final_stage = 'operator'
+          AND que.enqueued_time >= now() - INTERVAL '90 days'
+          AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
+        GROUP BY COALESCE(cl.dst_id, cl.dst_abonent)
+    )
+    SELECT
+        em.uuid           AS employee_uuid,
+        em.login          AS login,
+        em.title          AS employee_name,
+        em.post           AS position,
+        em.email          AS email,
+        em.removed        AS is_removed,
+        h.handled_calls   AS handled_calls,
+        h.queues_count    AS queues_count,
+        h.last_activity   AS last_activity
+    FROM handled h
+    JOIN mv_employee em ON em.login = h.login
+    ORDER BY em.title
     """
-    result = _execute(query, {"partner_uuid": partner_uuid, "cutoff_date": cutoff_date}, overrides)
-    return {row["login"] for row in result}
+    # Полный скан queued_calls_ms за 90 дней для крупного проекта — может идти
+    # дольше стандартных 20с; выполняется в фоновом потоке (см. employees.py
+    # _run_sync), так что долгий запрос не блокирует HTTP-поток.
+    rows = _execute(query, {"partner_uuid": partner_uuid}, overrides, timeout_ms=300000)
+    cutoff_30 = date.today() - timedelta(days=30)
+    cutoff_90 = date.today() - timedelta(days=90)
+    for row in rows:
+        last_activity = row.pop("last_activity")
+        last_date = last_activity.date() if last_activity else None
+        row["is_active_30d"] = bool(last_date and last_date >= cutoff_30)
+        row["is_active_90d"] = bool(last_date and last_date >= cutoff_90)
+    return rows
 
 
 def get_operator_sessions(logins: list, begin_date: str, end_date: str,
@@ -371,7 +447,7 @@ def get_operator_sessions(logins: list, begin_date: str, end_date: str,
     """
     if not logins:
         return []
-    from app.services.status_classification import STANDARD_WORK, STANDARD_OFFLINE
+    from app.services.status_classification import STANDARD_WORK, STANDARD_OFFLINE, WRAPUP_STATUSES, WRAPUP_STALE_SEC
     work_statuses = work_statuses if work_statuses is not None else list(STANDARD_WORK)
     offline_statuses = offline_statuses if offline_statuses is not None else list(STANDARD_OFFLINE)
     query = """
@@ -409,35 +485,63 @@ def get_operator_sessions(logins: list, begin_date: str, end_date: str,
                 ORDER BY entered
             )                                                             AS prev_status
         FROM events
+    ),
+    classified AS (
+        -- "После звонка" дольше wrapup_stale_sec — это пауза, а не работа
+        -- (операторы зависают в нём вместо паузы), та же логика, что в Онлайн.
+        SELECT
+            *,
+            (lower(status) = ANY(%(wrapup_statuses)s) AND duration > %(wrapup_stale_sec)s) AS is_stale_wrapup
+        FROM raw
+    ),
+    bounds AS (
+        -- Границы смены: первый вход в рабочий статус и последний выход в офлайн.
+        -- "Вышли" внутри смены считаем только между ними (короткие обрывы связи
+        -- в течение дня), а не время после ухода до конца суток.
+        SELECT
+            login, work_date,
+            MIN(entered) FILTER (WHERE lower(status) = ANY(%(work_statuses)s))            AS shift_first_login,
+            COALESCE(
+                MAX(entered) FILTER (WHERE lower(status) = ANY(%(offline_statuses)s)),
+                MAX(entered + make_interval(secs => duration::float))
+            )                                                                              AS shift_last_logout
+        FROM classified
+        GROUP BY login, work_date
     )
     SELECT
-        login                                                                              AS login,
-        work_date                                                                          AS work_date,
-        MIN(entered) FILTER (WHERE lower(status) = ANY(%(work_statuses)s))                AS first_login,
-        COALESCE(
-            MAX(entered) FILTER (WHERE lower(status) = ANY(%(offline_statuses)s)),
-            MAX(entered + make_interval(secs => duration::float))
-        )                                                                                  AS last_logout,
-        ROUND(SUM(duration)::numeric, 0)                                                   AS total_sec,
-        ROUND(SUM(duration) FILTER (WHERE lower(status) = ANY(%(work_statuses)s))::numeric, 0) AS normal_sec,
-        ROUND(SUM(duration) FILTER (
-            WHERE NOT (lower(status) = ANY(%(work_statuses)s) OR lower(status) = ANY(%(offline_statuses)s))
-        )::numeric, 0)                                                                    AS non_normal_sec,
-        ROUND(SUM(duration) FILTER (
-            WHERE NOT (lower(status) = ANY(%(offline_statuses)s))
-        )::numeric, 0)                                                                    AS shift_sec,
+        c.login                                                                            AS login,
+        c.work_date                                                                        AS work_date,
+        b.shift_first_login                                                                AS first_login,
+        b.shift_last_logout                                                                AS last_logout,
+        ROUND(SUM(c.duration)::numeric, 0)                                                 AS total_sec,
+        ROUND(SUM(c.duration) FILTER (
+            WHERE lower(c.status) = ANY(%(work_statuses)s) AND NOT c.is_stale_wrapup
+        )::numeric, 0)                                                                     AS normal_sec,
+        ROUND(SUM(c.duration) FILTER (
+            WHERE NOT (lower(c.status) = ANY(%(work_statuses)s) OR lower(c.status) = ANY(%(offline_statuses)s))
+               OR c.is_stale_wrapup
+        )::numeric, 0)                                                                     AS non_normal_sec,
+        ROUND(SUM(c.duration) FILTER (
+            WHERE lower(c.status) = ANY(%(offline_statuses)s)
+              AND c.entered >= b.shift_first_login AND c.entered <= b.shift_last_logout
+        )::numeric, 0)                                                                     AS offline_sec,
+        ROUND(SUM(c.duration) FILTER (
+            WHERE NOT (lower(c.status) = ANY(%(offline_statuses)s))
+        )::numeric, 0)                                                                     AS shift_sec,
         COUNT(*) FILTER (
-            WHERE NOT (lower(status) = ANY(%(work_statuses)s) OR lower(status) = ANY(%(offline_statuses)s))
-              AND (lower(prev_status) = ANY(%(work_statuses)s) OR prev_status IS NULL)
-        )                                                                                  AS break_count,
-        STRING_AGG(DISTINCT status, ', ' ORDER BY status)                                 AS statuses_seen
-    FROM raw
-    GROUP BY login, work_date
-    ORDER BY login, work_date
+            WHERE NOT (lower(c.status) = ANY(%(work_statuses)s) OR lower(c.status) = ANY(%(offline_statuses)s))
+              AND (lower(c.prev_status) = ANY(%(work_statuses)s) OR c.prev_status IS NULL)
+        )                                                                                   AS break_count,
+        STRING_AGG(DISTINCT c.status, ', ' ORDER BY c.status)                              AS statuses_seen
+    FROM classified c
+    JOIN bounds b USING (login, work_date)
+    GROUP BY c.login, c.work_date, b.shift_first_login, b.shift_last_logout
+    ORDER BY c.login, c.work_date
     """
     params = {
         "logins": logins, "begin_date": begin_date, "end_date": end_date,
         "work_statuses": work_statuses, "offline_statuses": offline_statuses,
+        "wrapup_statuses": list(WRAPUP_STATUSES), "wrapup_stale_sec": WRAPUP_STALE_SEC,
     }
     return _execute(query, params, overrides)
 
@@ -470,6 +574,43 @@ def get_operator_timeline(login: str, work_date: str, overrides: dict = None) ->
     ORDER BY entered
     """
     return _execute(query, {"login": login, "work_date": work_date}, overrides)
+
+
+def get_operator_timeline_window(login: str, hours: int, overrides: dict = None) -> list[dict]:
+    """Все события статуса оператора за скользящее окно [сейчас - hours, сейчас]
+    (для Онлайн-мониторинга — там нужны последние N часов, а не календарный день).
+    Сегменты обрезаются по границам окна, как и в get_operator_timeline по дню."""
+    query = """
+    WITH bound AS (
+        SELECT NOW() AS window_end, NOW() - (%(hours)s || ' hours')::interval AS window_start
+    ),
+    events AS (
+        SELECT
+            sc.login,
+            sc.status,
+            sc.entered,
+            LEAD(sc.entered) OVER (
+                PARTITION BY sc.login ORDER BY sc.entered
+            ) AS next_entered
+        FROM status_changes sc, bound
+        WHERE sc.login = %(login)s
+          AND sc.entered >= bound.window_start - INTERVAL '1 day'
+          AND sc.entered <= bound.window_end
+    )
+    SELECT
+        e.login,
+        e.status,
+        GREATEST(e.entered, bound.window_start)                                            AS entered,
+        EXTRACT(EPOCH FROM (
+            LEAST(COALESCE(e.next_entered, bound.window_end), bound.window_end)
+            - GREATEST(e.entered, bound.window_start)
+        ))                                                                                  AS duration_sec
+    FROM events e, bound
+    WHERE COALESCE(e.next_entered, bound.window_end) > bound.window_start
+      AND e.entered < bound.window_end
+    ORDER BY entered
+    """
+    return _execute(query, {"login": login, "hours": hours}, overrides)
 
 
 def get_actual_operators_by_hour(logins: list, begin_date: str, end_date: str,

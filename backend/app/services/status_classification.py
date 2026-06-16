@@ -16,6 +16,13 @@ STANDARD_OFFLINE = {
     'away', 'notavailable', 'not_available',
 }
 
+# Операторы иногда «зависают» в статусе после звонка, чтобы не уходить на
+# паузу формально. Если человек дольше WRAPUP_STALE_SEC сидит в одном из этих
+# статусов — это засчитывается как пауза (а не как работа), независимо от
+# того, что статус технически "рабочий".
+WRAPUP_STATUSES = {'wrapup', 'wrapup#voice', 'acw'}
+WRAPUP_STALE_SEC = 600
+
 
 def is_standard(status: str) -> bool:
     s = status.lower()

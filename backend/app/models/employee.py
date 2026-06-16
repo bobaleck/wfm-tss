@@ -19,6 +19,10 @@ class Employee(Base):
     phone = Column(String(50))
     email = Column(String(100))
     is_active = Column(Boolean, default=True)
+    # Сотрудники, добавленные вручную через форму, не сопоставляются с Naumen
+    # при синхронизации (не получают авто-увольнение/реактивацию/удаление по
+    # логину, даже если в карточке вручную указан существующий naumen_login).
+    added_manually = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

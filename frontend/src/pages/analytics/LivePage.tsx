@@ -10,6 +10,7 @@ import { format } from 'date-fns'
 import { requiredAgents } from '@/utils/erlang'
 import { useStatusClassifier } from '@/utils/statusClassification'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import StatusTimeline from '@/components/StatusTimeline'
 
 interface CurrentOperator {
   login: string
@@ -35,15 +36,24 @@ function minutesAgo(dt: string) {
   return m > 0 ? `${h}ч ${m}м назад` : `${h}ч назад`
 }
 
-function OpRow({ op, labelFn, colorFn }: { op: CurrentOperator; labelFn: (s: string) => string; colorFn: (s: string) => string }) {
+function elapsedSec(entered: string) {
+  return (Date.now() - new Date(entered).getTime()) / 1000
+}
+
+function OpRow({ op, labelFn, colorFn, onClick }: { op: CurrentOperator; labelFn: (s: string, d?: number) => string; colorFn: (s: string, d?: number) => string; onClick: () => void }) {
+  const dur = elapsedSec(op.entered)
   return (
-    <div className="flex items-center justify-between px-4 py-3">
+    <div
+      onClick={onClick}
+      className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-slate-50"
+      title="Показать историю статусов"
+    >
       <div className="min-w-0">
         <p className="text-sm font-medium text-slate-800 truncate">{op.employee_name || op.login}</p>
         <p className="text-xs text-slate-400">{op.login} · {minutesAgo(op.entered)}</p>
       </div>
-      <span className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ml-2 ${colorFn(op.status)}`}>
-        {labelFn(op.status)}
+      <span className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ml-2 ${colorFn(op.status, dur)}`}>
+        {labelFn(op.status, dur)}
       </span>
     </div>
   )
@@ -69,6 +79,24 @@ function Section({
   )
 }
 
+function renderOpList(
+  ops: CurrentOperator[],
+  labelFn: (s: string, d?: number) => string,
+  colorFn: (s: string, d?: number) => string,
+  expandedLogins: Set<string>,
+  toggleExpanded: (login: string) => void,
+  partnerUuid: string | undefined,
+) {
+  return ops.map((op) => (
+    <div key={op.login}>
+      <OpRow op={op} labelFn={labelFn} colorFn={colorFn} onClick={() => toggleExpanded(op.login)} />
+      {expandedLogins.has(op.login) && (
+        <StatusTimeline login={op.login} hours={24} partnerUuid={partnerUuid} employeeName={op.employee_name || op.login} />
+      )}
+    </div>
+  ))
+}
+
 const DONUT_COLORS = ['#16a34a', '#f59e0b', '#94a3b8']
 const RADIAN = Math.PI / 180
 function DonutLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) {
@@ -88,6 +116,9 @@ export default function LivePage() {
   const today = format(new Date(), 'yyyy-MM-dd')
   const currentHour = new Date().getHours()
   const [lastRefreshed, setLastRefreshed] = useState(new Date())
+  const [expandedLogins, setExpandedLogins] = useState<Set<string>>(new Set())
+  const toggleExpanded = (login: string) =>
+    setExpandedLogins((prev) => { const n = new Set(prev); n.has(login) ? n.delete(login) : n.add(login); return n })
 
   const { classify, label: labelEx, color: colorEx } = useStatusClassifier(activeProject?.customer_uuid)
 
@@ -146,17 +177,18 @@ export default function LivePage() {
   )
 
   const onlineOps = useMemo(
-    () => recentOps.filter((o) => classify(o.status) === 'work' && withinWindow(o.entered, STALE_ONLINE_H)),
+    () => recentOps.filter((o) => classify(o.status, elapsedSec(o.entered)) === 'work' && withinWindow(o.entered, STALE_ONLINE_H)),
     [recentOps, classify],
   )
   const pauseOps = useMemo(
-    () => recentOps.filter((o) => classify(o.status) === 'pause'),
+    () => recentOps.filter((o) => classify(o.status, elapsedSec(o.entered)) === 'pause'),
     [recentOps, classify],
   )
   const offlineOps = useMemo(
-    () => recentOps.filter(
-      (o) => classify(o.status) === 'offline' || (classify(o.status) === 'work' && !withinWindow(o.entered, STALE_ONLINE_H)),
-    ),
+    () => recentOps.filter((o) => {
+      const grp = classify(o.status, elapsedSec(o.entered))
+      return grp === 'offline' || (grp === 'work' && !withinWindow(o.entered, STALE_ONLINE_H))
+    }),
     [recentOps, classify],
   )
 
@@ -237,7 +269,7 @@ export default function LivePage() {
             count={onlineOps.length}
             empty="Нет активных операторов"
           >
-            {onlineOps.map((op) => <OpRow key={op.login} op={op} labelFn={labelEx} colorFn={colorEx} />)}
+            {renderOpList(onlineOps, labelEx, colorEx, expandedLogins, toggleExpanded, activeProject.customer_uuid)}
           </Section>
 
           <Section
@@ -246,7 +278,7 @@ export default function LivePage() {
             count={pauseOps.length}
             empty="Никто не на паузе"
           >
-            {pauseOps.map((op) => <OpRow key={op.login} op={op} labelFn={labelEx} colorFn={colorEx} />)}
+            {renderOpList(pauseOps, labelEx, colorEx, expandedLogins, toggleExpanded, activeProject.customer_uuid)}
           </Section>
 
           <Section
@@ -255,7 +287,7 @@ export default function LivePage() {
             count={offlineOps.length}
             empty="Нет офлайн операторов"
           >
-            {offlineOps.map((op) => <OpRow key={op.login} op={op} labelFn={labelEx} colorFn={colorEx} />)}
+            {renderOpList(offlineOps, labelEx, colorEx, expandedLogins, toggleExpanded, activeProject.customer_uuid)}
           </Section>
 
           {/* Activity donut chart */}

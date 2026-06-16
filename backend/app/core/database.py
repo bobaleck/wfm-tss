@@ -6,6 +6,12 @@ from app.core.config import settings
 engine = create_engine(
     settings.WFM_DATABASE_URL,
     connect_args={"check_same_thread": False} if "sqlite" in settings.WFM_DATABASE_URL else {},
+    # Дефолтный QueuePool (5 + overflow 10 = 15) исчерпывается при нескольких открытых вкладках,
+    # которые параллельно опрашивают разные ручки, пока часть запросов держит сессию во время
+    # медленных синхронных вызовов в Naumen. Когда пул кончается, падает даже get_current_user —
+    # то есть авторизация на любой ручке, что выглядит как полный отказ системы.
+    pool_size=20,
+    max_overflow=40,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -26,6 +32,7 @@ def _sqlite_migrate(db_engine):
     migrations = [
         ("employees", "employment_status TEXT DEFAULT 'new'"),
         ("employees", "preferred_schedule TEXT"),
+        ("employees", "added_manually INTEGER DEFAULT 0"),
         ("teams", "leader_id INTEGER REFERENCES employees(id)"),
         ("shifts", "actual_start_time TEXT"),
         ("shifts", "actual_end_time TEXT"),

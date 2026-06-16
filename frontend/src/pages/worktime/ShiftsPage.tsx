@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, Clock4, Save, CheckCircle, AlertTriangle, Download, RefreshCw, ChevronRight, ChevronDown, Activity } from 'lucide-react'
 import api from '@/api/client'
-import type { Shift, OperatorSession, TimelineEvent } from '@/types'
+import type { Shift, OperatorSession } from '@/types'
 import { SHIFT_STATUSES } from '@/types'
 import { useProjectStore } from '@/store/project'
 import PageHeader from '@/components/common/PageHeader'
@@ -11,99 +11,10 @@ import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import EmptyState from '@/components/common/EmptyState'
 import { format, subDays, addDays } from 'date-fns'
-import { useStatusClassifier, type StatusGroup } from '@/utils/statusClassification'
+import StatusTimeline from '@/components/StatusTimeline'
 
 type ShiftSortKey = 'employee_name' | 'shift_date' | 'start_time' | 'end_time' | 'schedule_name' | 'status' | 'actual_hours_worked'
-type SessionSortKey = 'employee_name' | 'first_login' | 'last_logout' | 'normal_sec' | 'non_normal_sec' | 'shift_sec' | 'break_count'
-
-// Классификация статусов (work/pause/offline) — единая с Онлайн-мониторингом,
-// включая индивидуальные настройки проекта (см. useStatusClassifier).
-const GROUP_CONFIG: Record<StatusGroup, { bg: string; label: string }> = {
-  work:    { bg: '#22c55e', label: 'Работает' },
-  pause:   { bg: '#f59e0b', label: 'Простой' },
-  offline: { bg: '#94a3b8', label: 'Офлайн' },
-}
-
-// ─── Временная линия статусов ────────────────────────────────────────────────
-function StatusTimeline({ login, workDate, partnerUuid }: { login: string; workDate: string; partnerUuid: string | undefined }) {
-  const { classify, label } = useStatusClassifier(partnerUuid)
-  const { data, isLoading } = useQuery({
-    queryKey: ['timeline', login, workDate],
-    queryFn: () =>
-      api.get('/analytics/operator-timeline', { params: { login, work_date: workDate } })
-         .then((r) => r.data.data as TimelineEvent[]),
-    staleTime: 5 * 60 * 1000,
-  })
-
-  if (isLoading) return <div className="px-4 py-3 text-xs text-slate-400 animate-pulse">Загрузка временной линии…</div>
-  if (!data?.length) return <div className="px-4 py-3 text-xs text-slate-400">Нет данных о статусах</div>
-
-  const firstEntered = new Date(data[0].entered)
-  const lastEntered = new Date(data[data.length - 1].entered)
-  const dayStart = new Date(firstEntered)
-  dayStart.setHours(firstEntered.getHours(), 0, 0, 0)
-  const dayEnd = new Date(lastEntered)
-  dayEnd.setHours(Math.min(lastEntered.getHours() + 2, 23), 59, 59, 999)
-  const totalMs = Math.max(1, dayEnd.getTime() - dayStart.getTime())
-
-  // Aggregate totals per group for legend
-  const groupTotals: Record<StatusGroup, number> = { work: 0, pause: 0, offline: 0 }
-  for (const e of data) groupTotals[classify(e.status)] += e.duration_sec
-
-  const presentGroups = (Object.keys(groupTotals) as StatusGroup[]).filter((k) => groupTotals[k] > 0)
-
-  return (
-    <div className="px-4 py-3 bg-white border-t border-slate-100">
-      {/* Временная линия */}
-      <div className="relative h-9 rounded-lg overflow-hidden mb-2" style={{ background: '#f1f5f9' }}>
-        {data.map((evt, i) => {
-          const start = (new Date(evt.entered).getTime() - dayStart.getTime()) / totalMs * 100
-          const dur = Math.max(0.3, (evt.duration_sec * 1000) / totalMs * 100)
-          const group = classify(evt.status)
-          const { bg } = GROUP_CONFIG[group]
-          return (
-            <div
-              key={i}
-              title={`${GROUP_CONFIG[group].label} (${label(evt.status)}): ${evt.entered.slice(11, 16)} · ${Math.round(evt.duration_sec / 60)} мин`}
-              style={{
-                position: 'absolute',
-                left: `${start}%`,
-                width: `${dur}%`,
-                backgroundColor: bg,
-                top: 0,
-                bottom: 0,
-                borderRight: '1px solid rgba(255,255,255,0.25)',
-              }}
-            />
-          )
-        })}
-      </div>
-
-      {/* Метки времени */}
-      <div className="relative h-4 mb-3 text-xs text-slate-400 select-none">
-        {data.filter((_, i) => i % Math.max(1, Math.floor(data.length / 8)) === 0).map((evt, i) => {
-          const left = (new Date(evt.entered).getTime() - dayStart.getTime()) / totalMs * 100
-          return (
-            <span key={i} style={{ position: 'absolute', left: `${left}%`, transform: 'translateX(-50%)' }}>
-              {evt.entered.slice(11, 16)}
-            </span>
-          )
-        })}
-      </div>
-
-      {/* Легенда */}
-      <div className="flex flex-wrap gap-4">
-        {presentGroups.map((g) => (
-          <div key={g} className="flex items-center gap-1.5 text-xs text-slate-600">
-            <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: GROUP_CONFIG[g].bg }} />
-            <span className="font-medium">{GROUP_CONFIG[g].label}</span>
-            <span className="text-slate-400">{Math.round(groupTotals[g] / 60)} мин</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
+type SessionSortKey = 'employee_name' | 'first_login' | 'last_logout' | 'normal_sec' | 'non_normal_sec' | 'offline_sec' | 'shift_sec' | 'break_count'
 
 function SortTh({ label, sortKey, current, dir, onSort, className = '' }: {
   label: string; sortKey: string; current: string; dir: 'asc' | 'desc'
@@ -586,7 +497,8 @@ export default function ShiftsPage() {
                               <SortTh label="Последний выход" sortKey="last_logout" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
                               <SortTh label="В смене (мин)" sortKey="shift_sec" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
                               <SortTh label="В линии (мин)" sortKey="normal_sec" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
-                              <SortTh label="Паузы (мин)" sortKey="non_normal_sec" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
+                              <SortTh label="На паузе (мин)" sortKey="non_normal_sec" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
+                              <SortTh label="Вышли (мин)" sortKey="offline_sec" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
                               <SortTh label="Пауз" sortKey="break_count" current={sessSortKey} dir={sessSortDir} onSort={handleSessSort} className="py-2" />
                             </tr>
                           </thead>
@@ -597,6 +509,7 @@ export default function ShiftsPage() {
                               const shiftMin = s.shift_sec != null ? Math.round(s.shift_sec / 60) : null
                               const onlineMin = s.normal_sec != null ? Math.round(s.normal_sec / 60) : null
                               const pauseMin = s.non_normal_sec != null ? Math.round(s.non_normal_sec / 60) : null
+                              const offlineMin = s.offline_sec != null ? Math.round(s.offline_sec / 60) : null
                               const busyPct = shiftMin && shiftMin > 0 && onlineMin != null
                                 ? Math.min(100, Math.round((onlineMin / shiftMin) * 100))
                                 : null
@@ -629,12 +542,13 @@ export default function ShiftsPage() {
                                     </td>
                                     <td className="px-4 py-2 text-blue-700 font-medium">{onlineMin ?? '—'}</td>
                                     <td className="px-4 py-2 text-amber-600">{pauseMin ?? '—'}</td>
+                                    <td className="px-4 py-2 text-slate-500">{offlineMin ?? '—'}</td>
                                     <td className="px-4 py-2 text-slate-500">{s.break_count ?? '—'}</td>
                                   </tr>
                                   {isExpanded && (
                                     <tr key={`${i}-tl`} className="border-b border-slate-100">
-                                      <td colSpan={8} className="p-0">
-                                        <StatusTimeline login={s.login} workDate={date} partnerUuid={activeProject?.customer_uuid} />
+                                      <td colSpan={9} className="p-0">
+                                        <StatusTimeline login={s.login} workDate={date} partnerUuid={activeProject?.customer_uuid} employeeName={s.employee_name || s.login} />
                                       </td>
                                     </tr>
                                   )}

@@ -3,6 +3,10 @@ import axios from 'axios'
 const api = axios.create({
   baseURL: '/api/v1',
   headers: { 'Content-Type': 'application/json' },
+  // Без таймаута зависший запрос к Naumen держит соединение в браузере
+  // бесконечно — а у браузера ограниченное число одновременных соединений
+  // на origin, так что одна зависшая вкладка тормозит и все остальные.
+  timeout: 30000,
 })
 
 function getToken(): string | null {

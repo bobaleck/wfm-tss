@@ -159,14 +159,24 @@ def get_operator_sessions(
 @router.get("/operator-timeline")
 def get_operator_timeline(
     login: str,
-    work_date: str,
+    work_date: Optional[str] = None,
+    hours: Optional[int] = None,
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Временная линия статусов оператора за один день."""
+    """Временная линия статусов оператора — либо за календарный день (work_date,
+    используется в Сменах), либо за скользящее окно в hours часов до текущего
+    момента (используется в Онлайн-мониторинге)."""
     try:
-        data = naumen.get_operator_timeline(login, work_date, _build_overrides(db))
+        if hours is not None:
+            data = naumen.get_operator_timeline_window(login, hours, _build_overrides(db))
+        elif work_date is not None:
+            data = naumen.get_operator_timeline(login, work_date, _build_overrides(db))
+        else:
+            raise HTTPException(400, detail="Укажите work_date или hours")
         return {"data": data}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(503, detail=str(e))
 

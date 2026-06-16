@@ -27,7 +27,7 @@ export default function StatusesPage() {
   const qc = useQueryClient()
   const [edits, setEdits] = useState<Record<string, { label: string; classification: StatusGroup }>>({})
 
-  const { data: discovered, isLoading, isFetching, refetch } = useQuery({
+  const { data: discovered, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['status-discover', activeProject?.customer_uuid],
     queryFn: () =>
       api.get(`/status-configs/${activeProject!.customer_uuid}/discover`)
@@ -69,7 +69,16 @@ export default function StatusesPage() {
         }
       />
 
-      {isLoading ? <PageSpinner /> : (
+      {isLoading ? <PageSpinner /> : isError ? (
+        <div className="card p-8 flex items-center gap-4 bg-red-50 border-red-200">
+          <AlertCircle size={20} className="text-red-500 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="text-red-800 font-medium">Не удалось загрузить статусы из Naumen</p>
+            <p className="text-red-600 text-sm mt-0.5">{(error as any)?.response?.data?.detail || (error as any)?.message || 'Неизвестная ошибка'}</p>
+          </div>
+          <button className="btn-secondary" onClick={() => refetch()}><RefreshCw size={14} /> Повторить</button>
+        </div>
+      ) : (
         <>
           <div className="card overflow-hidden mb-6">
             <div className="px-4 py-3 border-b border-slate-100">

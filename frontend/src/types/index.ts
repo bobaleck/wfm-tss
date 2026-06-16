@@ -159,6 +159,7 @@ export interface OperatorSession {
   total_sec: number | null
   normal_sec: number | null
   non_normal_sec: number | null
+  offline_sec: number | null
   shift_sec: number | null
   break_count: number | null
   statuses_seen: string | null
