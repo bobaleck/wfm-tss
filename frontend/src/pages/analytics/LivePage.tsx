@@ -50,7 +50,7 @@ function OpRow({ op, labelFn, colorFn, onClick }: { op: CurrentOperator; labelFn
     >
       <div className="min-w-0">
         <p className="text-sm font-medium text-slate-800 truncate">{op.employee_name || op.login}</p>
-        <p className="text-xs text-slate-400">{op.login} · {minutesAgo(op.entered)}</p>
+        <p className="text-xs text-slate-400">{op.login} · с {op.entered.slice(11, 16)}</p>
       </div>
       <span className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ml-2 ${colorFn(op.status, dur)}`}>
         {labelFn(op.status, dur)}

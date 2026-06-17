@@ -14,7 +14,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from 'recharts'
 
-type SortKey = 'employee_name' | 'handled_calls' | 'avg_talk_sec' | 'total_talk_sec' | 'idle_sec' | 'avg_answer_sec' | 'sl_percent'
+type SortKey = 'employee_name' | 'login' | 'position' | 'handled_calls' | 'avg_talk_sec' | 'total_talk_sec' | 'idle_sec' | 'avg_answer_sec' | 'sl_percent'
 
 function truncateName(name: string | null, login: string): string {
   if (!name) return login
@@ -162,8 +162,8 @@ export default function OperatorLoadPage() {
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100">
                   <SortHeader label="Оператор" sortKey="employee_name" current={sortKey} dir={sortDir} onSort={handleSort} />
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">Логин</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">Должность</th>
+                  <SortHeader label="Логин" sortKey="login" current={sortKey} dir={sortDir} onSort={handleSort} />
+                  <SortHeader label="Должность" sortKey="position" current={sortKey} dir={sortDir} onSort={handleSort} />
                   <SortHeader label="Звонков" sortKey="handled_calls" current={sortKey} dir={sortDir} onSort={handleSort} />
                   <SortHeader label="АНТ (с)" sortKey="avg_talk_sec" current={sortKey} dir={sortDir} onSort={handleSort} />
                   <SortHeader label="Общ. время разг." sortKey="total_talk_sec" current={sortKey} dir={sortDir} onSort={handleSort} />

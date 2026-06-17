@@ -31,11 +31,11 @@ export default function StaffingPage() {
   const [dayFilter, setDayFilter] = useState<DayFilter>('all')
   const [selectedQueues, setSelectedQueues] = useState<Set<string>>(new Set())
   const [fromHour, setFromHour] = useState(0)
-  const [toHour, setToHour] = useState(23)
+  const [toHour, setToHour] = useState(24)
 
   // Параметры прогноза
   const [projWeeks, setProjWeeks] = useState(4)
-  const [growthPct, setGrowthPct] = useState(0)
+  const [growthPct, setGrowthPct] = useState('')
 
   const { data, isLoading } = useQuery({
     queryKey: ['workload-staffing', activeProject?.customer_uuid, begin, end],
@@ -109,13 +109,15 @@ export default function StaffingPage() {
         actual: actualByHour[h] ?? null,
         _h: h,
       }
-    }).filter((r) => (r.avgCalls > 0 || r.actual != null) && r._h >= fromHour && r._h <= toHour)
+    }).filter((r) => (r.avgCalls > 0 || r.actual != null) && r._h >= fromHour && r._h <= Math.min(toHour, 23))
   }, [data, targetSl, targetSec, shrinkage, dayFilter, actualByHour, selectedQueues, fromHour, toHour])
+
+  const growthNum = parseFloat(growthPct) || 0
 
   // Прогноз на N недель вперёд
   const projectionData = useMemo(() => {
     if (!staffingData.length) return []
-    const growth = 1 + growthPct / 100
+    const growth = 1 + growthNum / 100
     const projStart = new Date()
     const projEnd = addDays(projStart, projWeeks * 7)
     const days = Math.round((projEnd.getTime() - projStart.getTime()) / 86400000)
@@ -218,12 +220,34 @@ export default function StaffingPage() {
                 {Array.from({ length: 24 }, (_, h) => (
                   <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
                 ))}
+                <option value={24}>24:00</option>
               </select>
             </div>
           </div>
           {allQueues.length > 1 && (
             <QueueFilterDropdown queues={allQueues} selected={selectedQueues} onChange={setSelectedQueues} />
           )}
+          <div className="flex items-end">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                setBegin(format(subDays(new Date(), 28), 'yyyy-MM-dd'))
+                setEnd(format(new Date(), 'yyyy-MM-dd'))
+                setTargetSl(80)
+                setTargetSec(20)
+                setShrinkage(30)
+                setDayFilter('all')
+                setSelectedQueues(new Set())
+                setFromHour(0)
+                setToHour(24)
+                setProjWeeks(4)
+                setGrowthPct('')
+              }}
+            >
+              Сбросить фильтры
+            </button>
+          </div>
         </div>
         <div className="mt-3 flex items-start gap-2 bg-blue-50 rounded-lg px-3 py-2">
           <Info size={14} className="text-blue-500 mt-0.5 flex-shrink-0" />
@@ -351,14 +375,16 @@ export default function StaffingPage() {
                   <span className="text-slate-400 font-normal ml-1">— от базового уровня</span>
                 </label>
                 <div className="flex items-center gap-2">
-                  <input type="number" className="input w-24" min={-50} max={200} value={growthPct}
-                    onChange={(e) => setGrowthPct(+e.target.value)} />
+                  <input type="number" className="input w-24" min={-50} max={200}
+                    placeholder="0"
+                    value={growthPct}
+                    onChange={(e) => setGrowthPct(e.target.value)} />
                   <span className="text-sm text-slate-500">%</span>
                 </div>
               </div>
-              {growthPct !== 0 && (
+              {growthNum !== 0 && (
                 <div className="text-sm text-slate-500 pb-1">
-                  Через {projWeeks} нед: звонков ×{(1 + growthPct / 100).toFixed(2)}
+                  Через {projWeeks} нед: звонков ×{(1 + growthNum / 100).toFixed(2)}
                 </div>
               )}
             </div>
@@ -366,7 +392,7 @@ export default function StaffingPage() {
             <div className="flex items-start gap-2 bg-amber-50 rounded-lg px-3 py-2 mb-5">
               <Info size={14} className="text-amber-500 mt-0.5 flex-shrink-0" />
               <p className="text-xs text-amber-700">
-                Прогноз рассчитывается из исторических средних × коэффициент роста. При росте нагрузки на {growthPct}%{' '}
+                Прогноз рассчитывается из исторических средних × коэффициент роста. При росте нагрузки на {growthNum}%{' '}
                 потребность в операторах вырастет нелинейно из-за теории очередей.
               </p>
             </div>
@@ -376,8 +402,8 @@ export default function StaffingPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="hour" tick={{ fontSize: 10 }} />
                 <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(val, name) => [val, name === 'projected' ? `Прогноз (×${(1 + growthPct/100).toFixed(2)})` : 'Текущая потребность']} />
-                <Legend formatter={(v) => v === 'projected' ? `Прогноз на ${projWeeks} нед. (рост ${growthPct}%)` : 'Текущая потребность'} />
+                <Tooltip formatter={(val, name) => [val, name === 'projected' ? `Прогноз (×${(1 + growthNum/100).toFixed(2)})` : 'Текущая потребность']} />
+                <Legend formatter={(v) => v === 'projected' ? `Прогноз на ${projWeeks} нед. (рост ${growthNum}%)` : 'Текущая потребность'} />
                 <Line type="monotone" dataKey="current" name="current" stroke="#93c5fd" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="projected" name="projected" stroke="#dc2626" strokeWidth={2.5} dot={{ r: 3 }} />
               </LineChart>
@@ -387,7 +413,7 @@ export default function StaffingPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-100">
-                    {['Час', 'Текущая потребность', `Прогноз (рост ${growthPct}%)`, 'Разница'].map((h) => (
+                    {['Час', 'Текущая потребность', `Прогноз (рост ${growthNum}%)`, 'Разница'].map((h) => (
                       <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                     ))}
                   </tr>

@@ -9,7 +9,7 @@ STANDARD_WORK = {
     'speaking', 'speaking#voice', 'inservice', 'wrapup', 'wrapup#voice', 'acw',
 }
 STANDARD_PAUSE = {
-    'break', 'lunch', 'training', 'meeting', 'not_ready', 'dnd', 'busy',
+    'break', 'lunch', 'training', 'meeting', 'not_ready', 'dnd', 'busy', 'accident',
 }
 STANDARD_OFFLINE = {
     'offline', 'logged_out', 'signedoff', 'loggedoff', 'disconnected',

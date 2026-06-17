@@ -33,6 +33,7 @@ export const STANDARD_LABEL: Record<string, string> = {
   not_ready: 'Не готов',
   dnd: 'Не беспокоить',
   busy: 'Занят',
+  accident: 'Авария',
   away: 'Отсутствует',
   notavailable: 'Недоступен',
   not_available: 'Недоступен',
@@ -63,6 +64,7 @@ export const STANDARD_COLOR: Record<string, string> = {
   not_ready: 'bg-red-100 text-red-600',
   dnd: 'bg-rose-100 text-rose-700',
   busy: 'bg-rose-100 text-rose-700',
+  accident: 'bg-amber-100 text-amber-700',
   away: 'bg-amber-100 text-amber-700',
   notavailable: 'bg-red-100 text-red-600',
   not_available: 'bg-red-100 text-red-600',
@@ -78,7 +80,7 @@ export const STANDARD_WORK = new Set([
   'speaking', 'speaking#voice', 'inservice', 'wrapup', 'wrapup#voice', 'acw',
 ])
 export const STANDARD_PAUSE = new Set([
-  'break', 'lunch', 'training', 'meeting', 'not_ready', 'dnd', 'busy',
+  'break', 'lunch', 'training', 'meeting', 'not_ready', 'dnd', 'busy', 'accident',
 ])
 export const STANDARD_OFFLINE = new Set([
   'offline', 'logged_out', 'signedoff', 'loggedoff', 'disconnected',
@@ -142,6 +144,10 @@ export function buildClassifier(configs: StatusConfigItem[] | undefined): Status
     if (isStaleWrapup(k, durationSec)) return 'bg-red-100 text-red-700 ring-1 ring-red-300'
     if (STANDARD_COLOR[k]) return STANDARD_COLOR[k]
     if (k.startsWith('custom')) return 'bg-amber-100 text-amber-700'
+    const grp = classMap[k]
+    if (grp === 'work') return 'bg-emerald-100 text-emerald-700'
+    if (grp === 'pause') return 'bg-amber-100 text-amber-700'
+    if (grp === 'offline') return 'bg-slate-100 text-slate-500'
     return 'bg-slate-100 text-slate-500'
   }
 

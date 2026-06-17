@@ -70,7 +70,7 @@ function ProjectAssignPanel({ userId, readOnly }: { userId: number; readOnly?: b
                     <span key={a.project_uuid} className="inline-flex items-center gap-1.5 pl-2.5 pr-1 py-1 bg-brand-50 border border-brand-200 rounded-lg text-xs font-medium text-brand-800">
                       {p?.customer_name ?? a.project_uuid}
                       {!readOnly && (
-                        <button onClick={() => removeMutation.mutate(a.project_uuid)}
+                        <button type="button" onClick={() => removeMutation.mutate(a.project_uuid)}
                           className="text-brand-400 hover:text-red-500 transition-colors p-0.5 rounded">
                           <X size={11} />
                         </button>
@@ -85,7 +85,7 @@ function ProjectAssignPanel({ userId, readOnly }: { userId: number; readOnly?: b
                 <p className="text-xs text-slate-400 mb-1.5">Добавить:</p>
                 <div className="flex flex-wrap gap-1.5">
                   {unassigned.map((p) => (
-                    <button key={p.customer_uuid} onClick={() => assignMutation.mutate(p.customer_uuid)}
+                    <button type="button" key={p.customer_uuid} onClick={() => assignMutation.mutate(p.customer_uuid)}
                       className="text-xs bg-white border border-slate-200 hover:border-brand-300 hover:bg-brand-50 text-slate-600 hover:text-brand-700 px-2.5 py-1 rounded-lg transition-colors">
                       + {p.customer_name}
                     </button>

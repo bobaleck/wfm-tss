@@ -20,6 +20,11 @@ const DOW_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 
 function getHour(period: string): number { return new Date(period).getHours() }
 function getDow(period: string): number { return (new Date(period).getDay() + 6) % 7 }
+function isWeekend(period: string): boolean {
+  const d = new Date(period).getDay(); return d === 0 || d === 6
+}
+
+type DayFilter = 'all' | 'weekday' | 'weekend'
 
 const HEAT_COLORS = ['#f8fafc', '#dbeafe', '#93c5fd', '#3b82f6', '#1d4ed8', '#1e3a8a']
 function heatColor(value: number, max: number): string {
@@ -52,6 +57,7 @@ export default function IntradayPage() {
   const [end, setEnd] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [view, setView] = useState<'hour' | 'heatmap'>('hour')
   const [selectedQueues, setSelectedQueues] = useState<Set<string>>(new Set())
+  const [dayFilter, setDayFilter] = useState<DayFilter>('all')
   const [sortKey, setSortKey] = useState<SortKey>('hour')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
@@ -81,9 +87,13 @@ export default function IntradayPage() {
 
   const filteredData = useMemo(() => {
     if (!data) return []
-    if (selectedQueues.size === 0) return data
-    return data.filter((r) => selectedQueues.has(r.queue_name))
-  }, [data, selectedQueues])
+    return data.filter((r) => {
+      if (selectedQueues.size > 0 && !selectedQueues.has(r.queue_name)) return false
+      if (dayFilter === 'weekday') return !isWeekend(r.period_start)
+      if (dayFilter === 'weekend') return isWeekend(r.period_start)
+      return true
+    })
+  }, [data, selectedQueues, dayFilter])
 
   if (!activeProject) return (
     <div>
@@ -150,6 +160,23 @@ export default function IntradayPage() {
             <option value="hour">По часам</option>
             <option value="heatmap">Тепловая карта</option>
           </select>
+        </div>
+        <div>
+          <label className="label">Дни</label>
+          <div className="flex rounded-lg overflow-hidden border border-slate-200">
+            {([['all', 'Все'], ['weekday', 'Будние'], ['weekend', 'Выходные']] as const).map(([v, l]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setDayFilter(v)}
+                className={`px-3 py-2 text-sm font-medium transition-colors ${
+                  dayFilter === v ? 'bg-brand-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
         </div>
         {allQueues.length > 1 && (
           <QueueFilterDropdown queues={allQueues} selected={selectedQueues} onChange={setSelectedQueues} />

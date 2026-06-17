@@ -4,6 +4,7 @@ import { Plus, Pencil, Trash2, ChevronRight, ChevronDown, UsersRound, Save, User
 import api from '@/api/client'
 import type { Team, Employee } from '@/types'
 import { TEAM_TYPE_LABELS } from '@/types'
+import { useProjectStore } from '@/store/project'
 import PageHeader from '@/components/common/PageHeader'
 import { PageSpinner } from '@/components/ui/Spinner'
 import Modal from '@/components/ui/Modal'
@@ -351,10 +352,14 @@ export default function TeamsPage() {
   const [editTeam, setEditTeam] = useState<Team | null>(null)
   const [addMemberTeam, setAddMemberTeam] = useState<Team | null>(null)
   const qc = useQueryClient()
+  const { activeProject } = useProjectStore()
 
   const { data, isLoading } = useQuery({
-    queryKey: ['teams'],
-    queryFn: () => api.get('/teams').then((r) => r.data as Team[]),
+    queryKey: ['teams', activeProject?.customer_uuid],
+    queryFn: () =>
+      api.get('/teams', { params: { project_uuid: activeProject?.customer_uuid } })
+        .then((r) => r.data as Team[]),
+    enabled: !!activeProject,
   })
 
   const { data: allEmployees = [] } = useQuery({

@@ -135,7 +135,8 @@ export default function StatusesPage() {
                 <tbody>
                   {customList.map((s) => {
                     const edit = edits[s.status_name] ?? { label: s.label ?? '', classification: s.classification ?? 'pause' }
-                    const dirty = edits[s.status_name] !== undefined
+                    const isUnsaved = s.classification === null
+                    const dirty = isUnsaved || edits[s.status_name] !== undefined
                     return (
                       <tr key={s.status_name} className="border-b border-slate-50">
                         <td className="px-4 py-2.5 font-mono text-xs text-slate-600">
