@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo, Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useProjectStore } from '@/store/project'
 import api from '@/api/client'
@@ -7,12 +7,115 @@ import PageHeader from '@/components/common/PageHeader'
 import StatCard from '@/components/common/StatCard'
 import { PageSpinner } from '@/components/ui/Spinner'
 import EmptyState from '@/components/common/EmptyState'
-import { AlertCircle, UserCheck, ChevronUp, ChevronDown } from 'lucide-react'
+import { AlertCircle, UserCheck, ChevronUp, ChevronDown, ChevronRight } from 'lucide-react'
 import { format, subDays } from 'date-fns'
 import DateRangePicker from '@/components/common/DateRangePicker'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from 'recharts'
+
+interface QLRow {
+  queue_name: string; login: string; employee_name: string | null; position: string | null
+  handled_calls: number; avg_talk_sec: number | null; total_talk_sec: number | null
+  avg_answer_sec: number | null; sl_percent: number | null
+}
+
+// Нагрузка операторов в разрезе очередей: очередь → операторы; оператор → его очереди.
+function QueueLoadSection({ begin, end }: { begin: string; end: string }) {
+  const { activeProject } = useProjectStore()
+  const [openQueues, setOpenQueues] = useState<Set<string>>(new Set())
+  const [openOp, setOpenOp] = useState<string | null>(null)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['operator-load-by-queue', activeProject?.customer_uuid, begin, end],
+    queryFn: () => api.get('/analytics/operator-load-by-queue', {
+      params: { partner_uuid: activeProject!.customer_uuid, begin, end },
+    }).then((r) => r.data.data as QLRow[]),
+    enabled: !!activeProject,
+  })
+
+  const byQueue = useMemo(() => {
+    const m: Record<string, QLRow[]> = {}
+    for (const r of data || []) (m[r.queue_name] = m[r.queue_name] || []).push(r)
+    return m
+  }, [data])
+  const byOp = useMemo(() => {
+    const m: Record<string, QLRow[]> = {}
+    for (const r of data || []) (m[r.login] = m[r.login] || []).push(r)
+    return m
+  }, [data])
+  const queues = Object.keys(byQueue).sort()
+  const toggleQ = (q: string) => setOpenQueues((p) => { const n = new Set(p); n.has(q) ? n.delete(q) : n.add(q); return n })
+  const agg = (rows: QLRow[]) => {
+    const handled = rows.reduce((s, r) => s + (r.handled_calls || 0), 0)
+    const slRows = rows.filter((r) => r.sl_percent != null)
+    const sl = slRows.length ? Math.round(slRows.reduce((s, r) => s + (r.sl_percent || 0), 0) / slRows.length) : null
+    return { handled, ops: rows.length, sl }
+  }
+  const slColor = (sl: number | null) => sl == null ? 'text-slate-400' : sl >= 80 ? 'text-green-600' : sl >= 60 ? 'text-yellow-600' : 'text-red-600'
+
+  if (isLoading) return <div className="card p-6 mt-6"><PageSpinner /></div>
+  if (!queues.length) return null
+
+  return (
+    <div className="card overflow-hidden mt-6">
+      <div className="px-4 py-3 border-b border-slate-100">
+        <h2 className="text-sm font-semibold text-slate-800">Нагрузка по очередям</h2>
+        <p className="text-xs text-slate-400 mt-0.5">Нажмите на очередь — увидите операторов; на оператора — его очереди. «Общая» статистика — в таблице выше.</p>
+      </div>
+      {queues.map((q) => {
+        const rows = byQueue[q]; const a = agg(rows); const open = openQueues.has(q)
+        return (
+          <div key={q}>
+            <button onClick={() => toggleQ(q)} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 border-b border-slate-50 text-left">
+              {open ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
+              <span className="font-medium text-slate-800 flex-1">{q}</span>
+              <span className="text-xs text-slate-500">{a.ops} опер.</span>
+              <span className="text-xs text-slate-700 font-medium w-20 text-right">{a.handled} зв.</span>
+              <span className={`text-xs font-medium w-16 text-right ${slColor(a.sl)}`}>SL {a.sl ?? '—'}%</span>
+            </button>
+            {open && (
+              <div className="bg-slate-50 border-b border-slate-100 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b border-slate-200 text-xs text-slate-500 uppercase">
+                    <th className="text-left px-4 py-2">Оператор</th>
+                    <th className="text-left px-4 py-2">Звонков</th>
+                    <th className="text-left px-4 py-2">AHT (с)</th>
+                    <th className="text-left px-4 py-2">SL</th>
+                  </tr></thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <Fragment key={r.login}>
+                        <tr onClick={() => setOpenOp(openOp === r.login ? null : r.login)} className="border-b border-slate-100 hover:bg-white cursor-pointer">
+                          <td className="px-4 py-2 font-medium text-slate-800">{openOp === r.login ? '▾ ' : '▸ '}{r.employee_name || r.login}</td>
+                          <td className="px-4 py-2 text-brand-600 font-medium">{r.handled_calls}</td>
+                          <td className="px-4 py-2 text-slate-600">{r.avg_talk_sec ?? '—'}</td>
+                          <td className="px-4 py-2"><span className={slColor(r.sl_percent)}>{r.sl_percent != null ? `${r.sl_percent}%` : '—'}</span></td>
+                        </tr>
+                        {openOp === r.login && (
+                          <tr className="bg-white border-b border-slate-100"><td colSpan={4} className="px-6 py-3">
+                            <p className="text-xs font-semibold text-slate-400 uppercase mb-2">Очереди оператора · {r.employee_name || r.login}</p>
+                            <div className="flex flex-wrap gap-2">
+                              {(byOp[r.login] || []).map((qr) => (
+                                <span key={qr.queue_name} className="text-xs bg-slate-100 rounded-lg px-2.5 py-1 text-slate-700">
+                                  {qr.queue_name}: <b>{qr.handled_calls}</b> зв.{qr.sl_percent != null ? ` · SL ${qr.sl_percent}%` : ''}
+                                </span>
+                              ))}
+                            </div>
+                          </td></tr>
+                        )}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 type SortKey = 'employee_name' | 'login' | 'position' | 'handled_calls' | 'avg_talk_sec' | 'total_talk_sec' | 'idle_sec' | 'avg_answer_sec' | 'sl_percent'
 
@@ -83,7 +186,7 @@ export default function OperatorLoadPage() {
   const [sortKey, setSortKey] = useState<SortKey>('handled_calls')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ['operator-load', activeProject?.customer_uuid, begin, end],
     queryFn: () =>
       api.get('/analytics/operator-load', {
@@ -91,6 +194,23 @@ export default function OperatorLoadPage() {
       }).then((r) => r.data.data as OperatorLoadRow[]),
     enabled: !!activeProject,
   })
+
+  // Разрез по очередям — чтобы в основном топе раскрыть оператора и увидеть доли по очередям
+  const [expandedLogin, setExpandedLogin] = useState<string | null>(null)
+  const [mainOpen, setMainOpen] = useState(false)
+  const { data: byQueueData } = useQuery({
+    queryKey: ['operator-load-by-queue', activeProject?.customer_uuid, begin, end],
+    queryFn: () =>
+      api.get('/analytics/operator-load-by-queue', {
+        params: { partner_uuid: activeProject!.customer_uuid, begin, end },
+      }).then((r) => r.data.data as QLRow[]),
+    enabled: !!activeProject,
+  })
+  const byOpQueues = useMemo(() => {
+    const m: Record<string, QLRow[]> = {}
+    for (const r of byQueueData || []) (m[r.login] = m[r.login] || []).push(r)
+    return m
+  }, [byQueueData])
 
   if (!activeProject) return (
     <div><PageHeader title="Нагрузка операторов" />
@@ -154,10 +274,15 @@ export default function OperatorLoadPage() {
       )}
 
       <div className="card overflow-hidden">
-        {isLoading ? <PageSpinner /> : filtered.length === 0 ? (
+        <button onClick={() => setMainOpen((o) => !o)} className="w-full flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-left">
+          {mainOpen ? <ChevronDown size={15} className="text-slate-400" /> : <ChevronRight size={15} className="text-slate-400" />}
+          <span className="font-semibold text-slate-800 text-sm flex-1">Общая нагрузка</span>
+          <span className="text-xs text-slate-400">{(data || []).length} операторов</span>
+        </button>
+        {mainOpen && (isLoading || isFetching ? <PageSpinner /> : filtered.length === 0 ? (
           <EmptyState title="Нет данных" icon={<UserCheck size={40} />} />
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto border-t border-slate-100">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100">
@@ -173,38 +298,71 @@ export default function OperatorLoadPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row, i) => (
-                  <tr key={i} className="border-b border-slate-50 hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900">{row.employee_name || '—'}</td>
-                    <td className="px-4 py-3 text-slate-500 font-mono text-xs">{row.login}</td>
-                    <td className="px-4 py-3 text-slate-600">{row.position || '—'}</td>
-                    <td className="px-4 py-3 font-semibold text-brand-600">{row.handled_calls}</td>
-                    <td className="px-4 py-3 text-slate-600">{row.avg_talk_sec ?? '—'}</td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {row.total_talk_sec ? `${Math.round(row.total_talk_sec / 60)} мин` : '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      {row.idle_sec != null && row.idle_sec > 0 ? (
-                        <span className={`font-medium ${row.idle_sec / 60 > 60 ? 'text-amber-600' : 'text-slate-600'}`}>
-                          {Math.round(row.idle_sec / 60)} мин
-                        </span>
-                      ) : <span className="text-slate-300">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{row.avg_answer_sec ?? '—'}</td>
-                    <td className="px-4 py-3">
-                      {row.sl_percent != null ? (
-                        <span className={`font-medium ${row.sl_percent >= 80 ? 'text-green-600' : row.sl_percent >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
-                          {row.sl_percent}%
-                        </span>
-                      ) : '—'}
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map((row, i) => {
+                  const open = expandedLogin === row.login
+                  const qs = byOpQueues[row.login] || []
+                  const totalQ = qs.reduce((s, q) => s + (q.handled_calls || 0), 0)
+                  return (
+                    <Fragment key={i}>
+                      <tr onClick={() => setExpandedLogin(open ? null : row.login)}
+                        className={`border-b border-slate-50 hover:bg-slate-50 cursor-pointer ${open ? 'bg-slate-50' : ''}`}>
+                        <td className="px-4 py-3 font-medium text-slate-900">
+                          <span className="text-slate-400 mr-1">{open ? '▾' : '▸'}</span>{row.employee_name || '—'}
+                        </td>
+                        <td className="px-4 py-3 text-slate-500 font-mono text-xs">{row.login}</td>
+                        <td className="px-4 py-3 text-slate-600">{row.position || '—'}</td>
+                        <td className="px-4 py-3 font-semibold text-brand-600">{row.handled_calls}</td>
+                        <td className="px-4 py-3 text-slate-600">{row.avg_talk_sec ?? '—'}</td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {row.total_talk_sec ? `${Math.round(row.total_talk_sec / 60)} мин` : '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          {row.idle_sec != null && row.idle_sec > 0 ? (
+                            <span className={`font-medium ${row.idle_sec / 60 > 60 ? 'text-amber-600' : 'text-slate-600'}`}>
+                              {Math.round(row.idle_sec / 60)} мин
+                            </span>
+                          ) : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{row.avg_answer_sec ?? '—'}</td>
+                        <td className="px-4 py-3">
+                          {row.sl_percent != null ? (
+                            <span className={`font-medium ${row.sl_percent >= 80 ? 'text-green-600' : row.sl_percent >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
+                              {row.sl_percent}%
+                            </span>
+                          ) : '—'}
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="border-b border-slate-100 bg-white">
+                          <td colSpan={9} className="px-6 py-3">
+                            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Очереди оператора · доли по звонкам</p>
+                            {qs.length === 0 ? (
+                              <p className="text-xs text-slate-400">Нет данных по очередям за период</p>
+                            ) : (
+                              <div className="flex flex-wrap gap-2">
+                                {[...qs].sort((a, b) => (b.handled_calls || 0) - (a.handled_calls || 0)).map((q) => {
+                                  const pct = totalQ > 0 ? Math.round((q.handled_calls || 0) / totalQ * 100) : 0
+                                  return (
+                                    <span key={q.queue_name} className="text-xs bg-slate-100 rounded-lg px-2.5 py-1 text-slate-700">
+                                      {q.queue_name}: <b>{pct}%</b> ({q.handled_calls} зв.){q.sl_percent != null ? ` · SL ${q.sl_percent}%` : ''}
+                                    </span>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>
-        )}
+        ))}
       </div>
+
+      <QueueLoadSection begin={begin} end={end} />
     </div>
   )
 }

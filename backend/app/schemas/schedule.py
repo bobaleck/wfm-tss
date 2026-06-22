@@ -11,6 +11,10 @@ class ScheduleBase(BaseModel):
     work_end: Optional[str] = None
     break_duration: int = 60
     days_of_week: str = "12345"
+    is_floating: bool = False
+    floating_days: Optional[int] = None
+    lunch_start: Optional[str] = None
+    lunch_end: Optional[str] = None
     description: Optional[str] = None
 
 
@@ -26,6 +30,10 @@ class ScheduleUpdate(BaseModel):
     work_end: Optional[str] = None
     break_duration: Optional[int] = None
     days_of_week: Optional[str] = None
+    is_floating: Optional[bool] = None
+    floating_days: Optional[int] = None
+    lunch_start: Optional[str] = None
+    lunch_end: Optional[str] = None
     description: Optional[str] = None
 
 
@@ -43,6 +51,8 @@ class ShiftBase(BaseModel):
     shift_date: date
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+    lunch_minutes: Optional[int] = None
+    lunch_start: Optional[str] = None
     status: str = "planned"
     notes: Optional[str] = None
 
@@ -52,9 +62,15 @@ class ShiftCreate(ShiftBase):
 
 
 class ShiftUpdate(BaseModel):
+    # shift_date обязателен для переноса смены на другую дату — без него
+    # редактирование даты молча игнорировалось (поля не было в схеме), и смена
+    # не «переезжала» в раздел «Запланировано».
+    shift_date: Optional[date] = None
     schedule_id: Optional[int] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+    lunch_minutes: Optional[int] = None
+    lunch_start: Optional[str] = None
     status: Optional[str] = None
     notes: Optional[str] = None
     actual_start_time: Optional[str] = None
@@ -79,6 +95,8 @@ class ShiftOut(ShiftBase):
     actual_hours_worked: Optional[str] = None
     needs_review: bool = False
     reconciled_at: Optional[datetime] = None
+    team_id: Optional[int] = None
+    team_name: Optional[str] = None
 
     class Config:
         from_attributes = True

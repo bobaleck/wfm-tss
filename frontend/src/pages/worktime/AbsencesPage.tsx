@@ -9,6 +9,7 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import EmptyState from '@/components/common/EmptyState'
+import DatePicker from '@/components/common/DatePicker'
 import { format, subDays } from 'date-fns'
 
 function AbsenceForm({ absence, onClose }: { absence?: Absence | null; onClose: () => void }) {
@@ -43,8 +44,8 @@ function AbsenceForm({ absence, onClose }: { absence?: Absence | null; onClose: 
         </select>
       </div>
       <div className="grid grid-cols-2 gap-4">
-        <div><label className="label">С</label><input type="date" className="input" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} /></div>
-        <div><label className="label">По</label><input type="date" className="input" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} /></div>
+        <div><label className="label">С</label><DatePicker value={form.start_date} onChange={(v) => setForm({ ...form, start_date: v })} /></div>
+        <div><label className="label">По</label><DatePicker value={form.end_date} onChange={(v) => setForm({ ...form, end_date: v })} /></div>
       </div>
       <div className="flex items-center gap-2">
         <input type="checkbox" id="approved" checked={form.approved} onChange={(e) => setForm({ ...form, approved: e.target.checked })} />
@@ -77,8 +78,8 @@ export default function AbsencesPage() {
       <PageHeader title="Отсутствия" subtitle="Отпуска, больничные и прочие отсутствия"
         actions={<button className="btn-primary" onClick={() => setShowForm(true)}><Plus size={16} /> Добавить</button>} />
       <div className="card p-4 mb-4 flex gap-4">
-        <div><label className="label">С</label><input type="date" className="input w-40" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></div>
-        <div><label className="label">По</label><input type="date" className="input w-40" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></div>
+        <div><label className="label">С</label><DatePicker value={dateFrom} onChange={setDateFrom} className="w-40" /></div>
+        <div><label className="label">По</label><DatePicker value={dateTo} onChange={setDateTo} className="w-40" /></div>
       </div>
       <div className="card overflow-hidden">
         {isLoading ? <PageSpinner /> : !data?.length ? (

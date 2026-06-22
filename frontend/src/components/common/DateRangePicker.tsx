@@ -29,7 +29,7 @@ function getMonthRange(month: number, year: number): [string, string] {
 }
 
 const QUICK: { label: string; mode: Mode }[] = [
-  { label: 'Сегодня', mode: 'day' },
+  { label: 'Вчера', mode: 'day' },
   { label: '3 дня', mode: '3days' },
   { label: 'Неделя', mode: 'week' },
 ]
@@ -67,7 +67,7 @@ export default function DateRangePicker({ begin, end, onChange, className }: Pro
 
   const handleQuick = (m: Mode) => {
     const now = new Date()
-    if (m === 'day') apply(fmt(now), fmt(now))
+    if (m === 'day') { const y = fmt(subDays(now, 1)); apply(y, y) }
     else if (m === '3days') apply(fmt(subDays(now, 2)), fmt(now))
     else if (m === 'week') apply(fmt(subDays(now, 6)), fmt(now))
   }
@@ -95,7 +95,7 @@ export default function DateRangePicker({ begin, end, onChange, className }: Pro
     <div className={`relative ${className ?? ''}`} ref={ref}>
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={() => { const willOpen = !open; setOpen(willOpen); if (willOpen) setMode('month') }}
         className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors ${
           open
             ? 'border-brand-400 bg-brand-50 text-brand-700'

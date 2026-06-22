@@ -6,6 +6,16 @@ interface Props {
   selected: Set<string>
   onChange: (next: Set<string>) => void
   label?: string
+  /** Подпись опции (если значение и отображаемый текст различаются). */
+  itemLabel?: (value: string) => string
+  /** Текст кнопки, когда выбраны все. По умолчанию «Все очереди». */
+  allLabel?: string
+  /** Заголовок выпадающего списка. По умолчанию «Фильтр по очередям». */
+  title?: string
+  /** Фиксированная ширина кнопки (напр. "w-44"), чтобы она не «прыгала» при смене выбора. */
+  buttonWidthClass?: string
+  /** Сторона раскрытия списка: 'right' — если кнопка у правого края экрана. */
+  align?: 'left' | 'right'
 }
 
 function CheckItem({
@@ -29,9 +39,13 @@ function CheckItem({
   )
 }
 
-export default function QueueFilterDropdown({ queues, selected, onChange, label = 'Очереди' }: Props) {
+export default function QueueFilterDropdown({
+  queues, selected, onChange, label = 'Очереди',
+  itemLabel, allLabel = 'Все очереди', title = 'Фильтр по очередям', buttonWidthClass, align = 'left',
+}: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const display = (v: string) => (itemLabel ? itemLabel(v) : v)
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -64,9 +78,9 @@ export default function QueueFilterDropdown({ queues, selected, onChange, label 
   const selectAll = () => { onChange(new Set()); setOpen(false) }
 
   const buttonLabel = isAllSelected
-    ? 'Все очереди'
+    ? allLabel
     : selected.size === 1
-      ? [...selected][0].length > 18 ? [...selected][0].slice(0, 18) + '…' : [...selected][0]
+      ? display([...selected][0]).length > 18 ? display([...selected][0]).slice(0, 18) + '…' : display([...selected][0])
       : `${selected.size} из ${queues.length}`
 
   return (
@@ -75,16 +89,16 @@ export default function QueueFilterDropdown({ queues, selected, onChange, label 
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className={`btn-secondary whitespace-nowrap gap-2 ${!isAllSelected ? 'border-brand-400 text-brand-700 bg-brand-50' : ''}`}
+        className={`btn-secondary gap-2 ${buttonWidthClass ? buttonWidthClass : 'whitespace-nowrap'} ${!isAllSelected ? 'border-brand-400 text-brand-700 bg-brand-50' : ''}`}
       >
-        <Filter size={14} />
-        <span className="max-w-36 truncate">{buttonLabel}</span>
+        <Filter size={14} className="flex-shrink-0" />
+        <span className={buttonWidthClass ? 'flex-1 text-left truncate' : 'max-w-36 truncate'}>{buttonLabel}</span>
       </button>
 
       {open && (
-        <div className="absolute z-30 top-full mt-1 left-0 bg-white border border-slate-200 rounded-xl shadow-lg w-64">
+        <div className={`absolute z-30 top-full mt-1 ${align === 'right' ? 'right-0' : 'left-0'} bg-white border border-slate-200 rounded-xl shadow-lg w-64`}>
           <div className="flex items-center justify-between px-3 pt-3 pb-1">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Фильтр по очередям</span>
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{title}</span>
             <button
               onClick={selectAll}
               className="text-xs text-brand-600 hover:text-brand-800 font-medium hover:underline"
@@ -96,7 +110,7 @@ export default function QueueFilterDropdown({ queues, selected, onChange, label 
             {queues.map((q) => (
               <CheckItem
                 key={q}
-                label={q}
+                label={display(q)}
                 checked={isAllSelected || selected.has(q)}
                 onChange={() => toggle(q)}
               />

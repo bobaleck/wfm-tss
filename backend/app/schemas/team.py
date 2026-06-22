@@ -15,6 +15,8 @@ class TeamBase(BaseModel):
     parent_id: Optional[int] = None
     team_type: str = "group"
     leader_id: Optional[int] = None
+    leader_user_id: Optional[int] = None
+    user_ids: List[int] = []
     description: Optional[str] = None
 
 
@@ -28,6 +30,8 @@ class TeamUpdate(BaseModel):
     parent_id: Optional[int] = None
     team_type: Optional[str] = None
     leader_id: Optional[int] = None
+    leader_user_id: Optional[int] = None
+    user_ids: Optional[List[int]] = None
     description: Optional[str] = None
 
 
@@ -37,6 +41,8 @@ class TeamOut(TeamBase):
     employee_count: int = 0
     parent_name: Optional[str] = None
     leader_name: Optional[str] = None
+    leader_user_name: Optional[str] = None
+    user_names: List[str] = []
 
     class Config:
         from_attributes = True

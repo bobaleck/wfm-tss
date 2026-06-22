@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useProjectStore } from '@/store/project'
 import api from '@/api/client'
 import type { WorkloadRow, Queue } from '@/types'
@@ -9,7 +9,7 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import EmptyState from '@/components/common/EmptyState'
 import QueueFilterDropdown from '@/components/common/QueueFilterDropdown'
 import DateRangePicker from '@/components/common/DateRangePicker'
-import { AlertCircle, Users, Info, TrendingUp } from 'lucide-react'
+import { AlertCircle, Users, Info, TrendingUp, Loader2, Upload, FileSpreadsheet } from 'lucide-react'
 import { format, subDays, addDays } from 'date-fns'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts'
 import { requiredAgents } from '@/utils/erlang'
@@ -21,8 +21,155 @@ function isWeekend(period: string): boolean {
 const HOUR_LABELS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`)
 type DayFilter = 'all' | 'weekday' | 'weekend'
 
+// ─── Вкладка «От заказчика»: потребность грузится из Excel и хранится в БД ────
+interface DemandRow { demand_date: string; hour: number; required: number }
+
+function CustomerDemandView() {
+  const { activeProject } = useProjectStore()
+  const qc = useQueryClient()
+  const [uploading, setUploading] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const [selDate, setSelDate] = useState('')
+
+  const { data: demand } = useQuery({
+    queryKey: ['customer-demand', activeProject?.customer_uuid],
+    queryFn: () => api.get('/analytics/customer-demand', { params: { partner_uuid: activeProject!.customer_uuid } }).then((r) => r.data.data as DemandRow[]),
+    enabled: !!activeProject,
+  })
+
+  const dates = useMemo(() => [...new Set((demand || []).map((d) => d.demand_date))].sort(), [demand])
+  useEffect(() => { if (dates.length && !dates.includes(selDate)) setSelDate(dates[0]) }, [dates, selDate])
+
+  const { data: actual } = useQuery({
+    queryKey: ['actual-by-date', activeProject?.customer_uuid, selDate],
+    queryFn: () => api.get('/analytics/actual-operators-by-queue', { params: { partner_uuid: activeProject!.customer_uuid, begin: selDate, end: selDate } }).then((r) => r.data.data as Array<{ hour_num: number; avg_operators: number }>),
+    enabled: !!activeProject && !!selDate,
+  })
+  const actualByHour = useMemo(() => {
+    const m: Record<number, number> = {}
+    for (const r of actual || []) m[r.hour_num] = r.avg_operators
+    return m
+  }, [actual])
+
+  const handleUpload = async (file: File) => {
+    setUploading(true); setMsg(null)
+    try {
+      const fd = new FormData(); fd.append('file', file)
+      const r = await api.post(`/analytics/customer-demand/upload?partner_uuid=${activeProject!.customer_uuid}`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      setMsg(`Загружено: ${r.data.days} дней (${r.data.date_from} – ${r.data.date_to}), строк: ${r.data.rows}`)
+      qc.invalidateQueries({ queryKey: ['customer-demand'] })
+    } catch (e: any) {
+      setMsg('Ошибка: ' + (e.response?.data?.detail || e.message))
+    } finally { setUploading(false) }
+  }
+
+  const rows = HOUR_LABELS.map((label, h) => ({
+    hour: label,
+    required: (demand || []).find((d) => d.demand_date === selDate && d.hour === h)?.required ?? 0,
+    actual: actualByHour[h] ?? null,
+  }))
+  const peak = rows.reduce((m, r) => Math.max(m, r.required), 0)
+  const totalReq = rows.reduce((s, r) => s + r.required, 0)
+
+  return (
+    <div>
+      <div className="card p-5 mb-6 flex flex-wrap items-center gap-4">
+        <label className="btn-primary cursor-pointer">
+          {uploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Загрузить Excel
+          <input type="file" accept=".xlsx,.xls" className="hidden" disabled={uploading}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.target.value = '' }} />
+        </label>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={async () => {
+            const res = await api.get('/analytics/customer-demand/template.xlsx', { responseType: 'blob' })
+            const url = URL.createObjectURL(res.data as Blob)
+            const a = document.createElement('a')
+            a.href = url; a.download = 'Шаблон_потребности.xlsx'; a.click(); URL.revokeObjectURL(url)
+          }}
+        >
+          <FileSpreadsheet size={15} /> Скачать шаблон
+        </button>
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          Заполните шаблон (даты × часы) и загрузите — потребность сохранится по проекту.
+        </div>
+        {dates.length > 0 && (
+          <div className="ml-auto flex items-center gap-2">
+            <label className="text-sm text-slate-500">Дата:</label>
+            <select className="input w-44" value={selDate} onChange={(e) => setSelDate(e.target.value)}>
+              {dates.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {msg && <div className={`card p-3 mb-4 text-sm ${msg.startsWith('Ошибка') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>{msg}</div>}
+
+      {dates.length === 0 ? (
+        <EmptyState title="Потребность не загружена" description="Загрузите Excel с потребностью от заказчика" icon={<FileSpreadsheet size={40} />} />
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+            <StatCard title="Дата" value={selDate} color="blue" />
+            <StatCard title="Пиковая потребность" value={`${peak} чел.`} color="purple" icon={<Users size={20} />} />
+            <StatCard title="Сумма за день (чел·ч)" value={totalReq} color="green" />
+          </div>
+
+          <div className="card p-6 mb-6">
+            <h2 className="text-sm font-semibold text-slate-800 mb-1">Потребность от заказчика по часам</h2>
+            <p className="text-xs text-slate-400 mb-4">{selDate} · красная линия — требование заказчика, зелёная — фактические операторы</p>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={rows}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="hour" tick={{ fontSize: 10 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip formatter={(v, n) => [v, n === 'required' ? 'Требуется (заказчик)' : 'Факт. операторов']} />
+                <Legend formatter={(v) => v === 'required' ? 'Требуется (заказчик)' : 'Факт. операторов'} />
+                <Line type="monotone" dataKey="required" name="required" stroke="#dc2626" strokeWidth={2.5} dot={{ r: 2 }} />
+                <Line type="monotone" dataKey="actual" name="actual" stroke="#16a34a" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100"><h2 className="text-sm font-semibold text-slate-800">Детализация по часам</h2></div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-100">
+                    {['Час', 'Требуется (заказчик)', 'Факт. операторов', 'Отклонение'].map((h) => (
+                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => {
+                    const diff = r.actual != null ? Math.round(r.actual) - r.required : null
+                    return (
+                      <tr key={r.hour} className="border-b border-slate-50 hover:bg-slate-50">
+                        <td className="px-4 py-2.5 font-mono text-slate-700">{r.hour}</td>
+                        <td className="px-4 py-2.5 font-medium text-red-600">{r.required}</td>
+                        <td className="px-4 py-2.5 text-green-700">{r.actual != null ? r.actual : '—'}</td>
+                        <td className="px-4 py-2.5">
+                          {diff != null ? <span className={`font-medium ${diff >= 0 ? 'text-green-600' : 'text-red-600'}`}>{diff >= 0 ? `+${diff}` : diff}</span> : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function StaffingPage() {
   const { activeProject } = useProjectStore()
+  const [mode, setMode] = useState<'calc' | 'customer'>('calc')
   const [begin, setBegin] = useState(format(subDays(new Date(), 28), 'yyyy-MM-dd'))
   const [end, setEnd] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [targetSl, setTargetSl] = useState(80)
@@ -37,7 +184,7 @@ export default function StaffingPage() {
   const [projWeeks, setProjWeeks] = useState(4)
   const [growthPct, setGrowthPct] = useState('')
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ['workload-staffing', activeProject?.customer_uuid, begin, end],
     queryFn: () =>
       api.get('/analytics/workload', {
@@ -56,12 +203,15 @@ export default function StaffingPage() {
 
   const allQueues = useMemo(() => (queuesData || []).map((q) => q.name).sort(), [queuesData])
 
-  // Фактические операторы по часам
-  const { data: actualOpsData } = useQuery({
-    queryKey: ['actual-operators', activeProject?.customer_uuid, begin, end],
+  // Фактические операторы по часам — с учётом ВЫБРАННЫХ очередей (union: оператор
+  // в нескольких выбранных очередях считается один раз). Без выбора — по всем.
+  const queueParam = useMemo(() => [...selectedQueues], [selectedQueues])
+  const { data: actualOpsData, isLoading: actualLoading } = useQuery({
+    queryKey: ['actual-operators-by-queue', activeProject?.customer_uuid, begin, end, queueParam],
     queryFn: () =>
-      api.get('/analytics/actual-operators', {
-        params: { partner_uuid: activeProject!.customer_uuid, begin, end },
+      api.get('/analytics/actual-operators-by-queue', {
+        params: { partner_uuid: activeProject!.customer_uuid, begin, end, queues: queueParam },
+        paramsSerializer: { indexes: null },
       }).then((r) => r.data.data as Array<{ hour_num: number; avg_operators: number }>),
     enabled: !!activeProject,
   })
@@ -161,6 +311,18 @@ export default function StaffingPage() {
     <div>
       <PageHeader title="Потребность в операторах" subtitle={`${activeProject.customer_name} · Erlang C`} />
 
+      {/* Подразделы */}
+      <div className="flex gap-1 mb-5 border-b border-slate-200">
+        {([['calc', 'Расчёт'], ['customer', 'От заказчика']] as const).map(([id, label]) => (
+          <button key={id} onClick={() => setMode(id)}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${mode === id ? 'border-brand-500 text-brand-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'customer' ? <CustomerDemandView /> : (<>
+
       {/* Parameters */}
       <div className="card p-5 mb-6">
         <div className="flex flex-wrap items-end gap-5">
@@ -203,7 +365,7 @@ export default function StaffingPage() {
             <label className="label">Часы (с — по)</label>
             <div className="flex items-center gap-1.5">
               <select
-                className="input w-20"
+                className="input w-24"
                 value={fromHour}
                 onChange={(e) => setFromHour(+e.target.value)}
               >
@@ -213,7 +375,7 @@ export default function StaffingPage() {
               </select>
               <span className="text-slate-400 text-sm">—</span>
               <select
-                className="input w-20"
+                className="input w-24"
                 value={toHour}
                 onChange={(e) => setToHour(+e.target.value)}
               >
@@ -263,16 +425,30 @@ export default function StaffingPage() {
         <StatCard title="Пиковая потребность" value={peakNeeded ? `${peakNeeded} чел.` : '—'}
           sub={peakRow ? `в ${peakRow.hour}` : undefined} color="purple" icon={<Users size={20} />} />
         <StatCard title="Средняя потребность" value={avgNeeded ? `${avgNeeded} чел.` : '—'} color="blue" />
-        {avgActual != null && (
-          <StatCard title="Ср. факт. операторов" value={`${avgActual} чел.`}
-            sub={avgActual < avgNeeded ? '⚠ Нехватка' : '✓ Норма'}
-            color={avgActual < avgNeeded ? 'red' : 'green'} />
-        )}
+        {/* Карточка всегда на месте — пока факт считается, крутится колесо «Расчёт…», */}
+        {/* чтобы блок не появлялся позже и не сдвигал разметку. */}
+        <div className="card p-5">
+          <p className="text-sm text-slate-500">Ср. факт. операторов</p>
+          {avgActual != null ? (
+            <>
+              <p className="text-2xl font-bold text-slate-900 mt-1">{avgActual} чел.</p>
+              <p className={`text-xs mt-0.5 ${avgActual < avgNeeded ? 'text-red-500' : 'text-green-600'}`}>
+                {avgActual < avgNeeded ? '⚠ Нехватка' : '✓ Норма'}
+              </p>
+            </>
+          ) : (isLoading || actualLoading) ? (
+            <p className="text-lg font-semibold text-slate-400 mt-2 flex items-center gap-2">
+              <Loader2 size={16} className="animate-spin" /> Расчёт…
+            </p>
+          ) : (
+            <p className="text-2xl font-bold text-slate-900 mt-1">—</p>
+          )}
+        </div>
         <StatCard title="Параметры SL" value={`${targetSl}% / ${targetSec}с`}
           sub={`Shrinkage: ${shrinkage}%`} color="green" />
       </div>
 
-      {isLoading ? <PageSpinner /> : !staffingData.length ? (
+      {isLoading || isFetching ? <PageSpinner /> : !staffingData.length ? (
         <EmptyState title="Нет данных" description="Настройте интеграцию с Naumen" />
       ) : (
         <>
@@ -440,6 +616,8 @@ export default function StaffingPage() {
           </div>
         </>
       )}
+
+      </>)}
     </div>
   )
 }

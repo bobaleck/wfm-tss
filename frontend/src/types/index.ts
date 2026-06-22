@@ -71,6 +71,10 @@ export interface Team {
   team_type: TeamType
   leader_id: number | null
   leader_name: string | null
+  leader_user_id: number | null
+  leader_user_name: string | null
+  user_ids: number[]
+  user_names: string[]
   description: string | null
   created_at: string
   employee_count: number
@@ -82,6 +86,7 @@ export interface Skill {
   name: string
   code: string | null
   description: string | null
+  icon: string | null
   project_uuid: string | null
   created_at: string
   employee_count: number
@@ -96,6 +101,10 @@ export interface Schedule {
   work_end: string | null
   break_duration: number
   days_of_week: string
+  is_floating: boolean
+  floating_days: number | null
+  lunch_start: string | null
+  lunch_end: string | null
   description: string | null
   created_at: string
 }
@@ -109,6 +118,8 @@ export interface Shift {
   shift_date: string
   start_time: string | null
   end_time: string | null
+  lunch_minutes: number | null
+  lunch_start: string | null
   status: string
   notes: string | null
   actual_start_time: string | null
@@ -116,6 +127,8 @@ export interface Shift {
   actual_hours_worked: string | null
   needs_review: boolean
   reconciled_at: string | null
+  team_id: number | null
+  team_name: string | null
   created_at: string
 }
 

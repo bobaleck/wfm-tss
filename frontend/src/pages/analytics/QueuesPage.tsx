@@ -13,11 +13,17 @@ import { slColor } from '@/utils/sl'
 import { format, subDays } from 'date-fns'
 import DateRangePicker from '@/components/common/DateRangePicker'
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from 'recharts'
 
 const CHANNEL_LABELS: Record<string, string> = {
   VOICE: 'Голос', CHAT: 'Чат', EMAIL: 'Email', VIDEO: 'Видео',
+}
+
+// Палитра для линий очередей на графике динамики
+const QUEUE_COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ea580c', '#0d9488', '#9333ea', '#ca8a04']
+const METRIC_LABELS: Record<'total' | 'handled' | 'lost', string> = {
+  total: 'Поступило', handled: 'Обработано', lost: 'Потеряно',
 }
 
 type QueueSortKey = 'name' | 'channel' | 'target_sl' | 'answer_sec' | 'status'
@@ -48,6 +54,7 @@ export default function QueuesPage() {
   const [end, setEnd] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [selectedQueues, setSelectedQueues] = useState<Set<string>>(new Set())
   const [interval, setIntervalValue] = useState<'hour' | 'day'>('day')
+  const [metric, setMetric] = useState<'total' | 'handled' | 'lost'>('total')
 
   const [queueSort, setQueueSort] = useState<QueueSortKey>('name')
   const [queueDir, setQueueDir] = useState<'asc' | 'desc'>('asc')
@@ -71,7 +78,7 @@ export default function QueuesPage() {
     enabled: !!activeProject,
   })
 
-  const { data: workload, isLoading: workloadLoading } = useQuery({
+  const { data: workload, isLoading: workloadLoading, isFetching: workloadFetching } = useQuery({
     queryKey: ['queues-workload', activeProject?.customer_uuid, begin, end, interval],
     queryFn: () =>
       api.get('/analytics/workload', {
@@ -90,6 +97,28 @@ export default function QueuesPage() {
       return queueDir === 'asc' ? cmp : -cmp
     })
   }, [queues, queueSort, queueDir])
+
+  // Очереди для графиков: выбранные фильтром, либо все (если ничего не выбрано).
+  const shownQueues = useMemo(
+    () => (selectedQueues.size ? allQueueNames.filter((n) => selectedQueues.has(n)) : allQueueNames),
+    [selectedQueues, allQueueNames],
+  )
+
+  // Динамика по периодам: для каждой выбранной очереди — своя серия + суммарная.
+  const timeSeries = useMemo(() => {
+    const shown = new Set(shownQueues)
+    const byPeriod: Record<string, any> = {}
+    for (const r of workload || []) {
+      if (!shown.has(r.queue_name)) continue
+      const p = (r.period_start || '').slice(0, interval === 'hour' ? 16 : 10).replace('T', ' ')
+      if (!p) continue
+      if (!byPeriod[p]) byPeriod[p] = { period: p, __total: 0 }
+      const v = (r as any)[metric] || 0
+      byPeriod[p][r.queue_name] = (byPeriod[p][r.queue_name] || 0) + v
+      byPeriod[p].__total += v
+    }
+    return Object.values(byPeriod).sort((a: any, b: any) => (a.period < b.period ? -1 : 1))
+  }, [workload, shownQueues, interval, metric])
 
   if (!activeProject) return (
     <div>
@@ -118,7 +147,9 @@ export default function QueuesPage() {
     return map
   }, [queues])
 
+  const shownSet = new Set(shownQueues)
   const chartData = Object.values(perQueue)
+    .filter((d) => shownSet.has(d.name))
     .map((d) => ({ ...d, sl: d.slCount > 0 ? Math.round(d.slSum / d.slCount) : null, target_sl: queueTargetSl[d.name] }))
     .sort((a, b) => b.total - a.total)
 
@@ -198,10 +229,54 @@ export default function QueuesPage() {
         )}
       </div>
 
-      {workloadLoading ? <PageSpinner /> : !chartData.length ? (
+      {workloadLoading || workloadFetching ? <PageSpinner /> : !chartData.length ? (
         <EmptyState title="Нет данных за период" icon={<PhoneCall size={40} />} />
       ) : (
         <>
+          {/* Динамика по очередям + суммарная линия */}
+          <div className="card p-6 mb-6">
+            <div className="flex items-start justify-between mb-1 gap-4 flex-wrap">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-800">Динамика по очередям</h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {METRIC_LABELS[metric]} по каждой {selectedQueues.size > 0 ? 'выбранной ' : ''}очереди и суммарно ·{' '}
+                  {interval === 'hour' ? 'по часам' : 'по дням'}
+                </p>
+              </div>
+              <div className="flex rounded-lg overflow-hidden border border-slate-200">
+                {(['total', 'handled', 'lost'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMetric(m)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      metric === m ? 'bg-brand-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {METRIC_LABELS[m]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={timeSeries} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="period" tick={{ fontSize: 10 }} minTickGap={24} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip contentStyle={{ fontSize: 12 }} />
+                <Legend formatter={(v) => (v === '__total' ? 'Суммарно' : v)} />
+                {shownQueues.map((q, i) => (
+                  <Line key={q} type="monotone" dataKey={q} stroke={QUEUE_COLORS[i % QUEUE_COLORS.length]}
+                    strokeWidth={1.5} dot={false} connectNulls />
+                ))}
+                {shownQueues.length > 1 && (
+                  <Line type="monotone" dataKey="__total" name="__total" stroke="#0f172a"
+                    strokeWidth={2.5} dot={false} />
+                )}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
           {/* Queue comparison chart */}
           <div className="card p-6 mb-6">
             <h2 className="text-sm font-semibold text-slate-800 mb-1">Сравнение очередей за период</h2>

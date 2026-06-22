@@ -66,7 +66,7 @@ export default function IntradayPage() {
     else { setSortKey(k); setSortDir(k === 'hour' ? 'asc' : 'desc') }
   }
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ['workload-intraday', activeProject?.customer_uuid, begin, end],
     queryFn: () =>
       api.get('/analytics/workload', {
@@ -189,7 +189,7 @@ export default function IntradayPage() {
         <StatCard title="Рабочих часов в сутки" value={workingHours} color="green" />
       </div>
 
-      {isLoading ? <PageSpinner /> : !filteredData.length ? (
+      {isLoading || isFetching ? <PageSpinner /> : !filteredData.length ? (
         <EmptyState title="Нет данных" />
       ) : (
         <>

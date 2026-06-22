@@ -648,11 +648,209 @@ def get_actual_operators_by_hour(logins: list, begin_date: str, end_date: str,
     return _execute(query, {"logins": logins, "begin_date": begin_date, "end_date": end_date}, overrides)
 
 
-def get_current_operators_for_project(partner_uuid: str, overrides: dict = None) -> list[dict]:
-    """Current operator statuses for a project.
-    Finds active logins via queued_calls_ms (last 7 days) then gets latest
-    status from status_changes (last 48 h) — fast, no full-table scan.
+def get_recent_stats(partner_uuid: str, window_min: int, overrides: dict = None) -> dict:
+    """Статистика за последние window_min минут: по очередям (Поступило/Обработано/
+    Потеряно/SL/AHT) и по (оператор, очередь) — для раздела «Мониторинг → Статистика»
+    с ползунком окна. Окно произвольное (минуты), т.к. считаем прямо по звонкам."""
+    q_queue = """
+    SELECT
+        icp.title AS queue_name,
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE que.final_stage = 'operator') AS handled,
+        COUNT(*) FILTER (WHERE COALESCE(que.final_stage,'') <> 'operator') AS lost,
+        ROUND(AVG(EXTRACT(EPOCH FROM (cl.ended - cl.connected))) FILTER (
+            WHERE que.final_stage = 'operator' AND cl.connected IS NOT NULL AND cl.ended IS NOT NULL
+        )::numeric, 1) AS aht,
+        CASE WHEN MAX(icp.calllimit) > 0 THEN ROUND(
+            100.0 * COUNT(*) FILTER (
+                WHERE que.final_stage = 'operator' AND que.unblocked_time_duration <= icp.calllimit * 1000
+            ) / NULLIF(COUNT(*), 0), 2)
+        ELSE NULL END AS sl
+    FROM queued_calls_ms que
+    JOIN mv_incoming_call_project icp ON icp.uuid = que.project_id
+    LEFT JOIN call_legs cl ON cl.session_id = que.session_id AND cl.leg_id = que.next_leg_id
+    WHERE icp.partneruuid = %(p)s AND icp.removed = false
+      AND que.enqueued_time >= NOW() - make_interval(mins => %(w)s)
+    GROUP BY icp.title
+    ORDER BY total DESC
     """
+    q_op = """
+    WITH aq AS (
+        SELECT uuid AS q_uuid, title AS queue_name, calllimit
+        FROM mv_incoming_call_project
+        WHERE partneruuid = %(p)s AND removed = false
+    )
+    SELECT
+        aq.queue_name AS queue_name,
+        COALESCE(cl.dst_id, cl.dst_abonent) AS login,
+        em.title AS employee_name,
+        COUNT(*) AS handled,
+        ROUND(AVG(EXTRACT(EPOCH FROM (cl.ended - cl.connected)))::numeric, 1) AS aht,
+        ROUND(100.0 * COUNT(*) FILTER (
+            WHERE que.unblocked_time_duration <= aq.calllimit * 1000
+        ) / NULLIF(COUNT(*), 0)::numeric, 2) AS sl
+    FROM queued_calls_ms que
+    JOIN aq ON aq.q_uuid = que.project_id
+    LEFT JOIN call_legs cl ON cl.session_id = que.session_id
+                           AND cl.leg_id = que.next_leg_id AND que.final_stage = 'operator'
+    LEFT JOIN mv_employee em ON em.login = COALESCE(cl.dst_id, cl.dst_abonent)
+    WHERE que.final_stage = 'operator'
+      AND que.enqueued_time >= NOW() - make_interval(mins => %(w)s)
+      AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
+    GROUP BY aq.queue_name, COALESCE(cl.dst_id, cl.dst_abonent), em.title
+    ORDER BY handled DESC
+    """
+    by_queue = _execute(q_queue, {"p": partner_uuid, "w": window_min}, overrides)
+    by_op_queue = _execute(q_op, {"p": partner_uuid, "w": window_min}, overrides)
+    return {"by_queue": by_queue, "by_operator_queue": by_op_queue}
+
+
+def get_operator_load_by_queue(partner_uuid: str, begin_date: str, end_date: str,
+                               overrides: dict = None) -> list[dict]:
+    """Нагрузка операторов в разрезе ОЧЕРЕДЕЙ: на каждую (очередь, оператор) —
+    обработанные звонки, AHT, общее время разговора, ср. ответ, SL. Позволяет
+    показать операторов по очередям и, наоборот, очереди по оператору."""
+    query = """
+    WITH active_queues AS (
+        SELECT uuid AS q_uuid, title AS queue_name, calllimit
+        FROM mv_incoming_call_project
+        WHERE partneruuid = %(partner_uuid)s AND removed = false
+    ),
+    operator_calls AS (
+        SELECT
+            aq.queue_name AS queue_name,
+            COALESCE(cl_op.dst_id, cl_op.dst_abonent,
+                     cl_rd.dst_id, cl_rd.dst_abonent) AS login,
+            COUNT(*) AS handled_calls,
+            ROUND(AVG(COALESCE(
+                EXTRACT(EPOCH FROM (cl_op.ended - cl_op.connected)),
+                EXTRACT(EPOCH FROM (cl_rd.ended - cl_rd.connected))
+            ))::numeric, 1) AS avg_talk_sec,
+            ROUND(SUM(COALESCE(
+                EXTRACT(EPOCH FROM (cl_op.ended - cl_op.connected)),
+                EXTRACT(EPOCH FROM (cl_rd.ended - cl_rd.connected))
+            ))::numeric, 0) AS total_talk_sec,
+            ROUND(AVG(que.unblocked_time_duration / 1000.0) FILTER (
+                WHERE que.final_stage = 'operator'
+            )::numeric, 1) AS avg_answer_sec,
+            ROUND(100.0 * COUNT(*) FILTER (
+                WHERE que.final_stage = 'operator'
+                  AND que.unblocked_time_duration <= aq.calllimit * 1000
+            ) / NULLIF(COUNT(*), 0)::numeric, 2) AS sl_percent
+        FROM queued_calls_ms que
+        JOIN active_queues aq ON aq.q_uuid = que.project_id
+        LEFT JOIN call_legs cl_op ON cl_op.session_id = que.session_id
+                                  AND cl_op.leg_id = que.next_leg_id
+                                  AND que.final_stage = 'operator'
+        LEFT JOIN call_legs cl_rd ON cl_rd.session_id = que.session_id
+                                  AND cl_rd.leg_id = que.next_leg_id
+                                  AND que.final_stage = 'redirect'
+        WHERE que.enqueued_time >= %(begin_date)s::timestamp
+          AND que.enqueued_time <  %(end_date)s::timestamp
+          AND COALESCE(cl_op.dst_id, cl_op.dst_abonent,
+                       cl_rd.dst_id, cl_rd.dst_abonent) IS NOT NULL
+        GROUP BY aq.queue_name, COALESCE(cl_op.dst_id, cl_op.dst_abonent,
+                                         cl_rd.dst_id, cl_rd.dst_abonent)
+    )
+    SELECT
+        oc.queue_name     AS queue_name,
+        oc.login          AS login,
+        em.title          AS employee_name,
+        em.post           AS position,
+        oc.handled_calls  AS handled_calls,
+        oc.avg_talk_sec   AS avg_talk_sec,
+        oc.total_talk_sec AS total_talk_sec,
+        oc.avg_answer_sec AS avg_answer_sec,
+        oc.sl_percent     AS sl_percent
+    FROM operator_calls oc
+    LEFT JOIN mv_employee em ON em.login = oc.login
+    ORDER BY oc.queue_name, oc.handled_calls DESC
+    """
+    return _execute(query, {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}, overrides)
+
+
+def get_actual_operators_union(partner_uuid: str, begin_date: str, end_date: str,
+                               queues: list = None, overrides: dict = None) -> list[dict]:
+    """Среднее фактическое число операторов по часам суток, считая ФАКТ по
+    очередям через обработку звонков. Если передан список queues — берём только
+    их, но оператор, работавший в нескольких выбранных очередях, считается ОДИН
+    раз (COUNT(DISTINCT login) на (день,час) поверх всех выбранных очередей =
+    union). Это исправляет двойной счёт мультиочередных операторов."""
+    queue_filter = "AND icp.title = ANY(%(queues)s)" if queues else ""
+    query = f"""
+    WITH active AS (
+        SELECT
+            DATE(que.enqueued_time)                       AS d,
+            EXTRACT(HOUR FROM que.enqueued_time)::int      AS hour_num,
+            COALESCE(cl.dst_id, cl.dst_abonent)            AS login
+        FROM queued_calls_ms que
+        JOIN mv_incoming_call_project icp ON icp.uuid = que.project_id
+        LEFT JOIN call_legs cl ON cl.session_id = que.session_id
+                               AND cl.leg_id = que.next_leg_id
+        WHERE icp.partneruuid = %(partner_uuid)s
+          AND icp.removed = false
+          AND que.final_stage = 'operator'
+          AND que.enqueued_time >= %(begin_date)s::timestamp
+          AND que.enqueued_time <  %(end_date)s::timestamp
+          AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
+          {queue_filter}
+    ),
+    by_day_hour AS (
+        SELECT d, hour_num, COUNT(DISTINCT login) AS cnt
+        FROM active GROUP BY d, hour_num
+    )
+    SELECT hour_num, ROUND(AVG(cnt)::numeric, 1) AS avg_operators
+    FROM by_day_hour GROUP BY hour_num ORDER BY hour_num
+    """
+    params = {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}
+    if queues:
+        params["queues"] = queues
+    return _execute(query, params, overrides)
+
+
+def get_actual_operators_by_queue(partner_uuid: str, begin_date: str, end_date: str,
+                                  overrides: dict = None) -> list[dict]:
+    """Среднее фактическое число операторов по (очередь, час). Для разреза по
+    очередям. Union по выбранным очередям считать отдельно (get_actual_operators_union)."""
+    query = """
+    WITH active AS (
+        SELECT
+            icp.title                                      AS queue_name,
+            DATE(que.enqueued_time)                        AS d,
+            EXTRACT(HOUR FROM que.enqueued_time)::int       AS hour_num,
+            COALESCE(cl.dst_id, cl.dst_abonent)            AS login
+        FROM queued_calls_ms que
+        JOIN mv_incoming_call_project icp ON icp.uuid = que.project_id
+        LEFT JOIN call_legs cl ON cl.session_id = que.session_id
+                               AND cl.leg_id = que.next_leg_id
+        WHERE icp.partneruuid = %(partner_uuid)s
+          AND icp.removed = false
+          AND que.final_stage = 'operator'
+          AND que.enqueued_time >= %(begin_date)s::timestamp
+          AND que.enqueued_time <  %(end_date)s::timestamp
+          AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
+    ),
+    by_q_day_hour AS (
+        SELECT queue_name, d, hour_num, COUNT(DISTINCT login) AS cnt
+        FROM active GROUP BY queue_name, d, hour_num
+    )
+    SELECT queue_name, hour_num, ROUND(AVG(cnt)::numeric, 1) AS avg_operators
+    FROM by_q_day_hour GROUP BY queue_name, hour_num ORDER BY queue_name, hour_num
+    """
+    return _execute(query, {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}, overrides)
+
+
+def get_current_operators_for_project(partner_uuid: str, overrides: dict = None,
+                                      work_statuses: list = None, offline_statuses: list = None) -> list[dict]:
+    """Текущие статусы операторов проекта. `entered` — НЕ время последней
+    «сырой» смены статуса, а начало текущего непрерывного отрезка той же
+    КЛАССИФИКАЦИИ (в линии / на паузе / офлайн). Так «в линии с HH:MM»
+    совпадает с временной шкалой (которая красит по группам), а не показывает
+    время последнего под-перехода внутри той же группы.
+    """
+    from app.services.status_classification import STANDARD_WORK, STANDARD_OFFLINE
+    work = work_statuses if work_statuses is not None else list(STANDARD_WORK)
+    offline = offline_statuses if offline_statuses is not None else list(STANDARD_OFFLINE)
     query = """
     WITH project_logins AS (
         SELECT DISTINCT COALESCE(cl.dst_id, cl.dst_abonent) AS login
@@ -666,26 +864,51 @@ def get_current_operators_for_project(partner_uuid: str, overrides: dict = None)
           AND que.enqueued_time >= NOW() - INTERVAL '7 days'
           AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
     ),
-    latest_status AS (
-        SELECT DISTINCT ON (sc.login)
-            sc.login,
-            sc.status,
-            sc.entered
+    ev AS (
+        SELECT
+            sc.login, sc.status, sc.entered,
+            CASE WHEN lower(sc.status) = ANY(%(work)s)    THEN 'work'
+                 WHEN lower(sc.status) = ANY(%(offline)s) THEN 'offline'
+                 ELSE 'pause' END AS grp
         FROM status_changes sc
         JOIN project_logins pl ON pl.login = sc.login
         WHERE sc.entered >= NOW() - INTERVAL '48 hours'
-        ORDER BY sc.login, sc.entered DESC
+    ),
+    marked AS (
+        SELECT login, status, entered, grp,
+               LAG(grp) OVER (PARTITION BY login ORDER BY entered) AS prev_grp
+        FROM ev
+    ),
+    islands AS (
+        SELECT login, status, entered, grp,
+               SUM(CASE WHEN grp IS DISTINCT FROM prev_grp THEN 1 ELSE 0 END)
+                   OVER (PARTITION BY login ORDER BY entered) AS island
+        FROM marked
+    ),
+    runs AS (
+        SELECT login, grp, island,
+               MIN(entered) AS run_started,
+               MAX(entered) AS last_entered,
+               (ARRAY_AGG(status ORDER BY entered DESC))[1] AS last_status
+        FROM islands
+        GROUP BY login, grp, island
+    ),
+    latest AS (
+        SELECT DISTINCT ON (login)
+            login, last_status AS status, run_started AS entered
+        FROM runs
+        ORDER BY login, last_entered DESC
     )
     SELECT
-        ls.login         AS login,
-        ls.status        AS status,
-        ls.entered       AS entered,
+        l.login          AS login,
+        l.status         AS status,
+        l.entered        AS entered,
         em.title         AS employee_name
-    FROM latest_status ls
-    LEFT JOIN mv_employee em ON em.login = ls.login
-    ORDER BY ls.status, ls.entered DESC
+    FROM latest l
+    LEFT JOIN mv_employee em ON em.login = l.login
+    ORDER BY l.status, l.entered DESC
     """
-    return _execute(query, {"partner_uuid": partner_uuid}, overrides)
+    return _execute(query, {"partner_uuid": partner_uuid, "work": work, "offline": offline}, overrides)
 
 
 def get_current_online_operators(logins: list, overrides: dict = None) -> list[dict]:

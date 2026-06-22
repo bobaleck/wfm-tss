@@ -81,6 +81,8 @@ def list_shifts(
         out = ShiftOut.model_validate(sh).model_dump()
         out["employee_name"] = sh.employee.full_name if sh.employee else None
         out["schedule_name"] = sh.schedule.name if sh.schedule else None
+        out["team_id"] = sh.employee.team_id if sh.employee else None
+        out["team_name"] = sh.employee.team.name if sh.employee and sh.employee.team else None
         result.append(out)
     return result
 
@@ -214,6 +216,134 @@ def reconcile_shifts(
 
     db.commit()
     return {"ok": True, "date": str(target_date), "updated": updated, "flagged": flagged, "skipped": skipped}
+
+
+@router.get("/shifts/export.xlsx")
+def export_shifts_xlsx(
+    project_uuid: Optional[str] = None,
+    date_from: date = Query(...),
+    date_to: date = Query(...),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Выгрузка графика смен в Excel по шаблону «График работы.xlsx»:
+    строки — сотрудники (сгруппированы по команде), столбцы — по 2 на каждый день
+    (дата+день недели в шапке, в ячейке — время смены и плановые часы)."""
+    import io
+    from datetime import timedelta, datetime as _dt
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import StreamingResponse
+
+    if date_to < date_from:
+        raise HTTPException(400, detail="date_to не может быть раньше date_from")
+
+    days = []
+    d = date_from
+    while d <= date_to:
+        days.append(d)
+        d += timedelta(days=1)
+
+    sq = db.query(Shift).join(Employee).filter(
+        Shift.shift_date >= date_from, Shift.shift_date <= date_to,
+    )
+    if project_uuid:
+        sq = sq.filter(Employee.project_uuid == project_uuid)
+    by_emp_date = {(sh.employee_id, sh.shift_date): sh for sh in sq.all()}
+
+    eq = db.query(Employee)
+    if project_uuid:
+        eq = eq.filter(Employee.project_uuid == project_uuid)
+    employees = [e for e in eq.all() if e.employment_status != "fired"]
+
+    def team_name(e):
+        return e.team.name if e.team else "Без команды"
+    employees.sort(key=lambda e: (team_name(e), e.full_name or ""))
+
+    WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "График"
+
+    thin = Side(style="thin", color="D9D9D9")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    hdr_fill = PatternFill("solid", fgColor="434343")
+    hdr_font = Font(bold=True, color="FFFFFF", size=10)
+    name_fill = PatternFill("solid", fgColor="B6D7A8")
+    day_fill = PatternFill("solid", fgColor="D9EAD3")
+    night_fill = PatternFill("solid", fgColor="D9D2E9")
+    we_fill = PatternFill("solid", fgColor="EFEFEF")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="center")
+
+    fixed = ["Команда", "Логин", "ФИО", "Telegram", "Должность", "График", "Тип"]
+    NF = len(fixed)
+    for i, h in enumerate(fixed, start=1):
+        c = ws.cell(row=1, column=i, value=h)
+        ws.merge_cells(start_row=1, start_column=i, end_row=3, end_column=i)
+        c.fill = hdr_fill; c.font = hdr_font; c.alignment = center; c.border = border
+
+    for di, day in enumerate(days):
+        col = NF + 1 + di * 2
+        c1 = ws.cell(row=1, column=col, value=day.strftime("%d.%m"))
+        ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + 1)
+        c2 = ws.cell(row=2, column=col, value=WEEKDAYS[day.weekday()])
+        ws.merge_cells(start_row=2, start_column=col, end_row=2, end_column=col + 1)
+        s1 = ws.cell(row=3, column=col, value="Смена")
+        s2 = ws.cell(row=3, column=col + 1, value="Ч")
+        for cc in (c1, c2, s1, s2):
+            cc.fill = hdr_fill; cc.font = hdr_font; cc.alignment = center; cc.border = border
+
+    widths = [26, 16, 30, 18, 16, 14, 10]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    for di in range(len(days)):
+        col = NF + 1 + di * 2
+        ws.column_dimensions[get_column_letter(col)].width = 11
+        ws.column_dimensions[get_column_letter(col + 1)].width = 6
+
+    r = 4
+    for e in employees:
+        ws.cell(row=r, column=1, value=team_name(e)).alignment = left
+        ws.cell(row=r, column=2, value=e.naumen_login or "")
+        nc = ws.cell(row=r, column=3, value=e.full_name or ""); nc.fill = name_fill
+        ws.cell(row=r, column=4, value=e.email or "")
+        ws.cell(row=r, column=5, value=e.position or "")
+        ws.cell(row=r, column=6, value=e.preferred_schedule or "")
+        ws.cell(row=r, column=7, value="")
+        for i in range(1, NF + 1):
+            ws.cell(row=r, column=i).border = border
+        for di, day in enumerate(days):
+            col = NF + 1 + di * 2
+            sh = by_emp_date.get((e.id, day))
+            cell = ws.cell(row=r, column=col)
+            hcell = ws.cell(row=r, column=col + 1)
+            is_we = day.weekday() >= 5
+            if sh and sh.start_time and sh.end_time:
+                st = sh.start_time[11:16]; en = sh.end_time[11:16]
+                cell.value = f"{st}-{en}"
+                try:
+                    a = _dt.fromisoformat(sh.start_time[:16]); b = _dt.fromisoformat(sh.end_time[:16])
+                    hrs = (b - a).total_seconds() / 3600 - (sh.lunch_minutes or 0) / 60
+                    hcell.value = round(hrs, 1)
+                except Exception:
+                    pass
+                cell.fill = night_fill if en <= st else day_fill
+            elif is_we:
+                cell.fill = we_fill; hcell.fill = we_fill
+            cell.alignment = center; cell.border = border
+            hcell.alignment = center; hcell.border = border
+        r += 1
+
+    ws.freeze_panes = "H4"
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    fname = f"shifts_{date_from}_{date_to}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 # ─── Отсутствия ───────────────────────────────────────────────────────────────

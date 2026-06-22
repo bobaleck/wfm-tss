@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, UniqueConstraint, func
+from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, JSON, UniqueConstraint, func
 from app.core.database import Base
 
 
@@ -66,6 +66,20 @@ class StatusConfig(Base):
     classification = Column(String(20), nullable=False, default='pause')  # work | pause | offline
     label = Column(String(100), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class CustomerDemand(Base):
+    """Потребность операторов «от заказчика», загруженная из Excel: на каждый
+    день и час — требуемое число операторов. Количество дней произвольное."""
+    __tablename__ = "customer_demand"
+    __table_args__ = (UniqueConstraint("project_uuid", "demand_date", "hour", name="uq_customer_demand"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_uuid = Column(String(100), nullable=False, index=True)
+    demand_date = Column(Date, nullable=False, index=True)
+    hour = Column(Integer, nullable=False)
+    required = Column(Integer, nullable=False, default=0)
+    uploaded_at = Column(DateTime, server_default=func.now())
 
 
 class UserProject(Base):

@@ -35,6 +35,10 @@ function ScheduleForm({ schedule, onClose }: { schedule?: Schedule | null; onClo
     work_end: schedule?.work_end ?? '18:00',
     break_duration: schedule?.break_duration ?? 60,
     days_of_week: schedule?.days_of_week ?? '12345',
+    is_floating: schedule?.is_floating ?? false,
+    floating_days: schedule?.floating_days ?? 2,
+    lunch_start: schedule?.lunch_start ?? '',
+    lunch_end: schedule?.lunch_end ?? '',
     description: schedule?.description ?? '',
   })
   const [error, setError] = useState('')
@@ -51,26 +55,53 @@ function ScheduleForm({ schedule, onClose }: { schedule?: Schedule | null; onClo
   }
 
   return (
-    <form onSubmit={(e) => { e.preventDefault(); mutation.mutate(form) }} className="space-y-4">
+    <form onSubmit={(e) => { e.preventDefault(); mutation.mutate({ ...form, floating_days: form.is_floating ? form.floating_days : null }) }} className="space-y-4">
       {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</div>}
-      <div><label className="label">Название *</label><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
-      <div>
-        <label className="label">Рабочие дни</label>
-        <div className="flex gap-2 mt-1">
-          {DAYS.map((d) => (
-            <button type="button" key={d.key} onClick={() => toggleDay(d.key)}
-              className={`w-10 h-8 rounded text-xs font-medium transition-colors
-                ${form.days_of_week.includes(d.key) ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
-              {d.label}
-            </button>
-          ))}
+      <div><label className="label">Название *</label><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="напр. 2/2 день" /></div>
+
+      {/* Тип графика */}
+      <label className="flex items-center gap-2.5 cursor-pointer select-none">
+        <input type="checkbox" checked={form.is_floating} onChange={(e) => setForm({ ...form, is_floating: e.target.checked })} />
+        <span className="text-sm font-medium text-slate-700">Плавающий график</span>
+        <span className="text-xs text-slate-400">(2/2, 3/3, 7/7 — дни недели не фиксированы)</span>
+      </label>
+
+      {form.is_floating ? (
+        <div>
+          <label className="label">Количество рабочих дней подряд</label>
+          <input type="number" min={1} max={31} className="input w-32" value={form.floating_days}
+            onChange={(e) => setForm({ ...form, floating_days: +e.target.value })} />
+          <p className="text-xs text-slate-400 mt-1">Напр. 2 — для графика 2/2, 7 — для 7/7. Дни недели для таких графиков не задаются.</p>
         </div>
-      </div>
+      ) : (
+        <div>
+          <label className="label">Рабочие дни</label>
+          <div className="flex gap-2 mt-1">
+            {DAYS.map((d) => (
+              <button type="button" key={d.key} onClick={() => toggleDay(d.key)}
+                className={`w-10 h-8 rounded text-xs font-medium transition-colors
+                  ${form.days_of_week.includes(d.key) ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                {d.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-4">
         <div><label className="label">Начало</label><input type="time" className="input" value={form.work_start} onChange={(e) => setForm({ ...form, work_start: e.target.value })} /></div>
         <div><label className="label">Конец</label><input type="time" className="input" value={form.work_end} onChange={(e) => setForm({ ...form, work_end: e.target.value })} /></div>
         <div><label className="label">Перерыв (мин)</label><input type="number" className="input" min={0} max={120} value={form.break_duration} onChange={(e) => setForm({ ...form, break_duration: +e.target.value })} /></div>
       </div>
+
+      {/* Обед */}
+      <div className="grid grid-cols-2 gap-4">
+        <div><label className="label">Обед с <span className="text-slate-400 font-normal">(необязательно)</span></label>
+          <input type="time" className="input" value={form.lunch_start} onChange={(e) => setForm({ ...form, lunch_start: e.target.value })} /></div>
+        <div><label className="label">Обед до</label>
+          <input type="time" className="input" value={form.lunch_end} onChange={(e) => setForm({ ...form, lunch_end: e.target.value })} /></div>
+      </div>
+
       <div><label className="label">Описание</label><textarea className="input" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
       <div className="flex justify-end gap-2 pt-2">
         <button type="button" onClick={onClose} className="btn-secondary">Отмена</button>
@@ -105,8 +136,19 @@ export default function SchedulesPage() {
               </div>
             </div>
             <h3 className="font-semibold text-slate-900">{s.name}</h3>
-            <p className="text-sm text-slate-500 mt-1">{s.work_start} – {s.work_end} · перерыв {s.break_duration} мин</p>
-            <div className="mt-3"><DaysBadges days={s.days_of_week} /></div>
+            <p className="text-sm text-slate-500 mt-1">
+              {s.work_start} – {s.work_end} · перерыв {s.break_duration} мин
+              {s.lunch_start && s.lunch_end ? ` · обед ${s.lunch_start}–${s.lunch_end}` : ''}
+            </p>
+            <div className="mt-3">
+              {s.is_floating ? (
+                <span className="text-xs px-2 py-1 rounded-md bg-amber-100 text-amber-700 font-medium">
+                  Плавающий · {s.floating_days ?? '?'} раб. дн. подряд
+                </span>
+              ) : (
+                <DaysBadges days={s.days_of_week} />
+              )}
+            </div>
             {s.description && <p className="text-xs text-slate-400 mt-2">{s.description}</p>}
           </div>
         ))}

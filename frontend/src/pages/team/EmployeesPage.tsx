@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Search, Pencil, Trash2, UserCheck, Save, RefreshCw, Loader2,
-  ChevronDown, ChevronRight, X, Clock4, AlertCircle, Award, Filter,
+  ChevronDown, ChevronRight, X, Clock4, AlertCircle, Award, Filter, Eye,
 } from 'lucide-react'
+import ShiftAssignModal from '@/components/worktime/ShiftAssignModal'
 import api from '@/api/client'
 import type { Employee, Skill } from '@/types'
 import { EMPLOYMENT_STATUS_LABELS } from '@/types'
@@ -13,6 +14,7 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import EmptyState from '@/components/common/EmptyState'
+import QueueFilterDropdown from '@/components/common/QueueFilterDropdown'
 import { format } from 'date-fns'
 
 const STATUS_COLORS: Record<string, 'green' | 'blue' | 'gray'> = {
@@ -273,6 +275,7 @@ function EmployeeRow({
   onEdit,
   onDelete,
   onShift,
+  onViewShifts,
   onSkills,
   selected,
   onSelectToggle,
@@ -283,6 +286,7 @@ function EmployeeRow({
   onEdit: (e: Employee) => void
   onDelete: (e: Employee) => void
   onShift: (e: Employee) => void
+  onViewShifts: (e: Employee) => void
   onSkills: (e: Employee) => void
   selected: boolean
   onSelectToggle: () => void
@@ -316,7 +320,8 @@ function EmployeeRow({
         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1 justify-end">
             <button onClick={() => onSkills(emp)} className="p-1.5 hover:bg-purple-50 rounded-lg text-slate-400 hover:text-purple-600" title="Навыки"><Award size={13} /></button>
-            <button onClick={() => onShift(emp)} className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600" title="Поставить смену"><Clock4 size={13} /></button>
+            <button onClick={() => onShift(emp)} className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600" title="Проставить смены"><Clock4 size={13} /></button>
+            <button onClick={() => onViewShifts(emp)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-700" title="Просмотреть смены"><Eye size={13} /></button>
             <button onClick={() => onEdit(emp)} className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600" title="Редактировать"><Pencil size={13} /></button>
             <button onClick={() => onDelete(emp)} className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600" title="Удалить"><Trash2 size={13} /></button>
           </div>
@@ -370,28 +375,38 @@ function EmployeeRow({
                 </select>
               </div>
 
-              {/* Быстрые действия */}
-              <div className="min-w-[180px]">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Действия</p>
-                <div className="flex flex-col gap-2">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onSkills(emp) }}
-                    className="flex items-center gap-2 px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-xs font-medium transition-colors"
-                  >
-                    <Award size={13} /> Навыки
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onShift(emp) }}
-                    className="flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-medium transition-colors"
-                  >
-                    <Clock4 size={13} /> Поставить смену
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onEdit(emp) }}
-                    className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors"
-                  >
-                    <Pencil size={13} /> Редактировать карточку
-                  </button>
+              {/* Быстрые действия — две колонки по два действия */}
+              <div className="min-w-[300px]">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2 text-center">Действия</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onSkills(emp) }}
+                      className="flex items-center gap-2 px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-xs font-medium transition-colors"
+                    >
+                      <Award size={13} /> Навыки
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onEdit(emp) }}
+                      className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors"
+                    >
+                      <Pencil size={13} /> Редактировать
+                    </button>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onShift(emp) }}
+                      className="flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-medium transition-colors"
+                    >
+                      <Clock4 size={13} /> Проставить смены
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onViewShifts(emp) }}
+                      className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors"
+                    >
+                      <Eye size={13} /> Просмотреть смены
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -414,11 +429,10 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
 export default function EmployeesPage() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(['new', 'active']))
-  const [statusFilterOpen, setStatusFilterOpen] = useState(false)
-  const statusFilterRef = useRef<HTMLDivElement>(null)
   const [showForm, setShowForm] = useState(false)
   const [editEmployee, setEditEmployee] = useState<Employee | null>(null)
   const [shiftEmployee, setShiftEmployee] = useState<Employee | null>(null)
+  const [viewShiftsEmployee, setViewShiftsEmployee] = useState<Employee | null>(null)
   const [skillsEmployee, setSkillsEmployee] = useState<Employee | null>(null)
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -442,24 +456,6 @@ export default function EmployeesPage() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [skillFilterOpen])
-
-  useEffect(() => {
-    if (!statusFilterOpen) return
-    const handler = (e: MouseEvent) => {
-      if (statusFilterRef.current && !statusFilterRef.current.contains(e.target as Node)) setStatusFilterOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [statusFilterOpen])
-
-  const allStatusesSelected = statusFilter.size === STATUS_OPTIONS.length
-  const toggleAllStatuses = () => setStatusFilter(allStatusesSelected ? new Set() : new Set(STATUS_OPTIONS.map((o) => o.value)))
-  const toggleStatus = (value: string) =>
-    setStatusFilter((prev) => {
-      const n = new Set(prev)
-      n.has(value) ? n.delete(value) : n.add(value)
-      return n
-    })
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['employees', activeProject?.customer_uuid, search],
@@ -551,7 +547,7 @@ export default function EmployeesPage() {
   }
 
   const displayData = [...(data || []).filter((emp) => {
-      if (!statusFilter.has(emp.employment_status)) return false
+      if (statusFilter.size > 0 && !statusFilter.has(emp.employment_status)) return false
       if (skillFilter.size > 0) {
         const empSkillIds = new Set(emp.skills.map((s) => s.skill_id))
         for (const sid of skillFilter) if (!empSkillIds.has(sid)) return false
@@ -565,7 +561,9 @@ export default function EmployeesPage() {
       return sortDir === 'asc' ? cmp : -cmp
     })
 
-  const newEmployees = displayData.filter((e) => e.employment_status === 'new')
+  // Считаем новых от полного набора, а не от отфильтрованного вида — чтобы
+  // кнопка «Активировать новых» всегда показывала реальное число и не «прыгала».
+  const newEmployees = (data || []).filter((e) => e.employment_status === 'new')
 
   return (
     <div>
@@ -597,36 +595,16 @@ export default function EmployeesPage() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input className="input pl-9" placeholder="Поиск по имени..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <div className="relative" ref={statusFilterRef}>
-          <label className="label">Статус</label>
-          <button
-            onClick={() => setStatusFilterOpen((v) => !v)}
-            className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors w-44"
-          >
-            <span className="truncate">
-              {allStatusesSelected
-                ? 'Все статусы'
-                : statusFilter.size === 0
-                ? 'Не выбрано'
-                : STATUS_OPTIONS.filter((o) => statusFilter.has(o.value)).map((o) => o.label).join(', ')}
-            </span>
-            <ChevronDown size={14} className="flex-shrink-0 text-slate-400" />
-          </button>
-          {statusFilterOpen && (
-            <div className="absolute z-10 top-full mt-1 left-0 w-48 bg-white border border-slate-200 rounded-lg shadow-lg p-2">
-              <label className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-sm font-medium border-b border-slate-100 mb-1 pb-2">
-                <input type="checkbox" checked={allStatusesSelected} onChange={toggleAllStatuses} />
-                Все
-              </label>
-              {STATUS_OPTIONS.map((o) => (
-                <label key={o.value} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-sm">
-                  <input type="checkbox" checked={statusFilter.has(o.value)} onChange={() => toggleStatus(o.value)} />
-                  {o.label}
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
+        <QueueFilterDropdown
+          queues={STATUS_OPTIONS.map((o) => o.value)}
+          selected={statusFilter}
+          onChange={setStatusFilter}
+          label="Статус"
+          allLabel="Все статусы"
+          title="Фильтр по статусу"
+          buttonWidthClass="w-44"
+          itemLabel={(v) => STATUS_OPTIONS.find((o) => o.value === v)?.label ?? v}
+        />
         <div className="relative" ref={skillFilterRef}>
           <button
             onClick={() => setSkillFilterOpen((v) => !v)}
@@ -663,20 +641,19 @@ export default function EmployeesPage() {
             </div>
           )}
         </div>
-        {newEmployees.length > 0 && (
-          <button
-            onClick={() => {
-              if (confirm(`Активировать всех новых сотрудников? (${newEmployees.length} чел.)`)) {
-                handleBulkActivate(newEmployees.map((e) => e.id))
-              }
-            }}
-            disabled={bulkActivating}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-green-200 bg-green-50 text-green-700 hover:bg-green-100 transition-colors"
-          >
-            {bulkActivating ? <Loader2 size={14} className="animate-spin" /> : <UserCheck size={14} />}
-            Активировать новых ({newEmployees.length})
-          </button>
-        )}
+        <button
+          onClick={() => {
+            if (newEmployees.length === 0) return
+            if (confirm(`Активировать всех новых сотрудников? (${newEmployees.length} чел.)`)) {
+              handleBulkActivate(newEmployees.map((e) => e.id))
+            }
+          }}
+          disabled={bulkActivating || newEmployees.length === 0}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-green-200 bg-green-50 text-green-700 hover:bg-green-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-green-50"
+        >
+          {bulkActivating ? <Loader2 size={14} className="animate-spin" /> : <UserCheck size={14} />}
+          Активировать новых ({newEmployees.length})
+        </button>
       </div>
 
       {selectedIds.size > 0 && (
@@ -776,6 +753,7 @@ export default function EmployeesPage() {
                     onEdit={setEditEmployee}
                     onDelete={(e) => confirm(`Удалить сотрудника ${e.full_name}?`) && deleteMutation.mutate(e.id)}
                     onShift={setShiftEmployee}
+                    onViewShifts={setViewShiftsEmployee}
                     onSkills={setSkillsEmployee}
                     selected={selectedIds.has(emp.id)}
                     onSelectToggle={() =>
@@ -795,7 +773,8 @@ export default function EmployeesPage() {
 
       {showForm && <Modal open title="Новый сотрудник" onClose={() => setShowForm(false)}><EmployeeForm onClose={() => setShowForm(false)} /></Modal>}
       {editEmployee && <Modal open title="Редактировать сотрудника" onClose={() => setEditEmployee(null)}><EmployeeForm employee={editEmployee} onClose={() => setEditEmployee(null)} /></Modal>}
-      {shiftEmployee && <Modal open title={`Смена — ${shiftEmployee.full_name}`} onClose={() => setShiftEmployee(null)}><QuickShiftModal employee={shiftEmployee} onClose={() => setShiftEmployee(null)} /></Modal>}
+      {shiftEmployee && <Modal open size="xl" title={`Смены: ${shiftEmployee.full_name}`} onClose={() => setShiftEmployee(null)}><ShiftAssignModal employee={shiftEmployee} onClose={() => setShiftEmployee(null)} /></Modal>}
+      {viewShiftsEmployee && <Modal open size="xl" title={`Смены (просмотр): ${viewShiftsEmployee.full_name}`} onClose={() => setViewShiftsEmployee(null)}><ShiftAssignModal employee={viewShiftsEmployee} readOnly onClose={() => setViewShiftsEmployee(null)} /></Modal>}
       {skillsEmployee && (
         <Modal open title="Навыки сотрудника" onClose={() => setSkillsEmployee(null)}>
           <SkillsModal

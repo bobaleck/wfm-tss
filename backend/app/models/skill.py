@@ -10,6 +10,9 @@ class Skill(Base):
     name = Column(String(200), nullable=False)
     code = Column(String(50))
     description = Column(Text)
+    # Иконка навыка: либо ключ из предопределённого набора (напр. "PhoneIncoming"),
+    # либо data-URL загруженной картинки (data:image/...;base64,...).
+    icon = Column(Text)
     project_uuid = Column(String(50))
     created_at = Column(DateTime, server_default=func.now())
 

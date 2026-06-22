@@ -7,6 +7,7 @@ class SkillBase(BaseModel):
     name: str
     code: Optional[str] = None
     description: Optional[str] = None
+    icon: Optional[str] = None
     project_uuid: Optional[str] = None
 
 
@@ -18,6 +19,7 @@ class SkillUpdate(BaseModel):
     name: Optional[str] = None
     code: Optional[str] = None
     description: Optional[str] = None
+    icon: Optional[str] = None
     project_uuid: Optional[str] = None
 
 

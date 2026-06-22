@@ -34,14 +34,22 @@ def _sqlite_migrate(db_engine):
         ("employees", "preferred_schedule TEXT"),
         ("employees", "added_manually INTEGER DEFAULT 0"),
         ("teams", "leader_id INTEGER REFERENCES employees(id)"),
+        ("teams", "leader_user_id INTEGER REFERENCES users(id)"),
         ("shifts", "actual_start_time TEXT"),
         ("shifts", "actual_end_time TEXT"),
         ("shifts", "actual_hours_worked TEXT"),
         ("shifts", "needs_review INTEGER DEFAULT 0"),
         ("shifts", "reconciled_at TEXT"),
+        ("shifts", "lunch_minutes INTEGER"),
+        ("shifts", "lunch_start TEXT"),
+        ("schedules", "is_floating INTEGER DEFAULT 0"),
+        ("schedules", "floating_days INTEGER"),
+        ("schedules", "lunch_start TEXT"),
+        ("schedules", "lunch_end TEXT"),
         ("tracked_projects", "target_sl INTEGER"),
         ("tracked_projects", "is_manual INTEGER DEFAULT 0"),
         ("status_configs", "project_uuid TEXT"),
+        ("skills", "icon TEXT"),
     ]
     with db_engine.connect() as conn:
         for table, col_def in migrations:

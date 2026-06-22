@@ -11,6 +11,7 @@ import { requiredAgents } from '@/utils/erlang'
 import { useStatusClassifier } from '@/utils/statusClassification'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import StatusTimeline from '@/components/StatusTimeline'
+import MonitoringStats from '@/pages/analytics/MonitoringStats'
 
 interface CurrentOperator {
   login: string
@@ -19,7 +20,7 @@ interface CurrentOperator {
   entered: string
 }
 
-const REFRESH_MS = 5 * 60 * 1000
+const REFRESH_MS = 5 * 1000   // онлайн-данные обновляются автоматически раз в 5 секунд
 const WINDOW_H = 24   // show operators whose last status is within this window
 const STALE_ONLINE_H = 12 // if online status is older than this, treat as "left"
 
@@ -115,6 +116,7 @@ export default function LivePage() {
   const { activeProject } = useProjectStore()
   const today = format(new Date(), 'yyyy-MM-dd')
   const currentHour = new Date().getHours()
+  const [tab, setTab] = useState<'operators' | 'stats'>('operators')
   const [lastRefreshed, setLastRefreshed] = useState(new Date())
   const [expandedLogins, setExpandedLogins] = useState<Set<string>>(new Set())
   const toggleExpanded = (login: string) =>
@@ -151,23 +153,65 @@ export default function LivePage() {
     staleTime: 5 * 60 * 1000,
   })
 
+  // Смены на сегодня — для блока «По графику» (кто должен работать сейчас)
+  const { data: todayShifts } = useQuery({
+    queryKey: ['today-shifts', activeProject?.customer_uuid, today],
+    queryFn: () =>
+      api.get('/schedules/shifts', { params: { project_uuid: activeProject!.customer_uuid, date_from: today, date_to: today } })
+        .then((r) => r.data as any[]),
+    enabled: !!activeProject?.customer_uuid,
+    refetchInterval: REFRESH_MS,
+  })
+  const scheduledNow = useMemo(() => {
+    const now = Date.now()
+    return (todayShifts || []).filter((s: any) =>
+      s.start_time && s.end_time &&
+      now >= new Date(s.start_time).getTime() && now <= new Date(s.end_time).getTime())
+  }, [todayShifts, lastRefreshed])
+
+  // SL за последние сутки (по проекту, взвешенно по числу звонков)
+  const { data: dayStats } = useQuery({
+    queryKey: ['live-24h-sl', activeProject?.customer_uuid],
+    queryFn: () =>
+      api.get('/analytics/workload', {
+        params: { partner_uuid: activeProject!.customer_uuid, begin: format(new Date(Date.now() - 86400000), 'yyyy-MM-dd'), end: today, interval: 'day' },
+      }).then((r) => r.data.data as any[]),
+    enabled: !!activeProject?.customer_uuid,
+    refetchInterval: REFRESH_MS,
+    staleTime: REFRESH_MS,
+  })
+  const sl24 = useMemo(() => {
+    let num = 0, den = 0
+    for (const r of (dayStats || [])) {
+      if (r.sl_percent == null) continue
+      const w = r.total || 0; num += (r.sl_percent || 0) * w; den += w
+    }
+    return den > 0 ? Math.round(num / den) : null
+  }, [dayStats])
+
   const forecastedNow = useMemo(() => {
     if (!staffingForecast?.length) return null
-    const byHour: Record<number, { calls: number[]; ahts: number[] }> = {}
+    // Суммируем звонки по всем очередям в пределах одного (день, час), затем
+    // усредняем по дням — ИДЕНТИЧНО разделу «Потребность». Раньше каждая
+    // строка-очередь усреднялась отдельно, поэтому при нескольких очередях
+    // прогноз делился на их число и сильно занижался (отсюда расхождение
+    // «7 в Онлайн против 20 в Потребности»).
+    const agg: Record<number, { total: number; ahtSum: number; ahtCount: number; days: Set<string> }> = {}
     for (const row of staffingForecast) {
+      if (!row.period_start) continue
       const h = new Date(row.period_start).getHours()
-      if (!byHour[h]) byHour[h] = { calls: [], ahts: [] }
-      byHour[h].calls.push(row.total || 0)
-      if (row.avg_talk_sec) byHour[h].ahts.push(row.avg_talk_sec)
+      const dayKey = row.period_start.slice(0, 10)
+      if (!agg[h]) agg[h] = { total: 0, ahtSum: 0, ahtCount: 0, days: new Set() }
+      agg[h].total += row.total || 0
+      agg[h].days.add(dayKey)
+      if (row.avg_talk_sec) { agg[h].ahtSum += row.avg_talk_sec; agg[h].ahtCount++ }
     }
-    const h = currentHour
-    if (!byHour[h]?.calls.length) return null
-    const avgCalls = byHour[h].calls.reduce((a, b) => a + b, 0) / byHour[h].calls.length
-    const avgAHT = byHour[h].ahts.length
-      ? byHour[h].ahts.reduce((a, b) => a + b, 0) / byHour[h].ahts.length
-      : 180
+    const a = agg[currentHour]
+    if (!a || a.days.size === 0) return null
+    const avgCalls = a.total / a.days.size
+    const avgAHT = a.ahtCount ? a.ahtSum / a.ahtCount : 180
     const min = requiredAgents(avgCalls, avgAHT, 80, 20)
-    return Math.max(1, Math.round(min / (1 - 0.30)))
+    return Math.max(1, Math.ceil(min / (1 - 0.30)))
   }, [staffingForecast, currentHour])
 
   // All operators with status within 24h window
@@ -203,7 +247,7 @@ export default function LivePage() {
 
   if (!activeProject) return (
     <div>
-      <PageHeader title="Онлайн-мониторинг" />
+      <PageHeader title="Мониторинг" />
       <div className="card p-8 flex items-center gap-4 bg-amber-50 border-amber-200">
         <AlertCircle size={20} className="text-amber-500" />
         <p className="text-amber-800">Выберите проект в шапке</p>
@@ -213,13 +257,25 @@ export default function LivePage() {
 
   return (
     <div>
-      <PageHeader title="Онлайн-мониторинг" subtitle={activeProject.customer_name} />
+      <PageHeader title="Мониторинг" subtitle={activeProject.customer_name} />
+
+      {/* Вкладки раздела */}
+      <div className="flex gap-1 mb-5 border-b border-slate-200">
+        {([['operators', 'Операторы'], ['stats', 'Статистика']] as const).map(([id, l]) => (
+          <button key={id} onClick={() => setTab(id)}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${tab === id ? 'border-brand-500 text-brand-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'stats' ? <MonitoringStats /> : (<>
 
       {/* Status bar */}
       <div className="flex items-center justify-between mb-5 bg-slate-800 rounded-xl px-5 py-3">
         <div className="flex items-center gap-2 text-sm text-slate-300">
           <Radio size={14} className="text-green-400 animate-pulse" />
-          <span>Обновление каждые 5 минут · Последнее: {format(lastRefreshed, 'HH:mm:ss')}</span>
+          <span>Обновление каждые 5 секунд · Последнее: {format(lastRefreshed, 'HH:mm:ss')}</span>
         </div>
         <button
           onClick={() => { setLastRefreshed(new Date()); refetchOps() }}
@@ -230,7 +286,7 @@ export default function LivePage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className={`card p-5 ${isUnderstaffed ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
             Требуется на {String(currentHour).padStart(2, '0')}:00
@@ -250,6 +306,12 @@ export default function LivePage() {
               {isUnderstaffed ? `⚠ Нехватка: ${forecastedNow - actualOnlineCount} чел.` : '✓ Норма'}
             </p>
           )}
+        </div>
+
+        <div className="card p-5 border-blue-200 bg-blue-50">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">По графику сейчас</p>
+          <p className="text-3xl font-bold text-blue-700">{scheduledNow.length}</p>
+          <p className="text-xs text-slate-500 mt-1">Должны работать (активные смены)</p>
         </div>
 
         <div className="card p-5 border-slate-200">
@@ -290,43 +352,30 @@ export default function LivePage() {
             {renderOpList(offlineOps, labelEx, colorEx, expandedLogins, toggleExpanded, activeProject.customer_uuid)}
           </Section>
 
-          {/* Activity donut chart */}
-          <div className="card p-5">
-            <h2 className="text-sm font-semibold text-slate-800 mb-1">Активность операторов</h2>
-            <p className="text-xs text-slate-400 mb-3">За последние 24 часа · всего {recentOps.length} чел.</p>
-            {donutData.length === 0 ? (
-              <div className="flex items-center justify-center h-40 text-slate-300 text-sm">Нет данных</div>
-            ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie
-                    data={donutData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={55}
-                    outerRadius={85}
-                    dataKey="value"
-                    labelLine={false}
-                    label={DonutLabel}
-                  >
-                    {donutData.map((_, index) => (
-                      <Cell key={index} fill={DONUT_COLORS[index % DONUT_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(val, name) => [`${val} чел.`, name]} />
-                  <Legend
-                    formatter={(val, entry: any) => (
-                      <span className="text-xs text-slate-700">
-                        {val} — {entry.payload?.value} чел.
-                      </span>
-                    )}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+          {/* По графику — список из активных смен (раздел Смены → Активные).
+              Не идёт в статистику: для сравнения «в линии / на паузе / по графику». */}
+          <Section
+            dotColor="bg-blue-400"
+            title="По графику сейчас (активные смены)"
+            count={scheduledNow.length}
+            empty="Сейчас по графику никто не работает"
+          >
+            {scheduledNow.map((s: any) => (
+              <div key={s.id} className="flex items-center justify-between px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-800 truncate">{s.employee_name || `#${s.employee_id}`}</p>
+                  <p className="text-xs text-slate-400">
+                    {s.start_time?.slice(11, 16)}–{s.end_time?.slice(11, 16)}
+                    {s.lunch_minutes ? ` · обед ${s.lunch_minutes} мин` : ''}
+                  </p>
+                </div>
+                {s.team_name && <span className="text-xs text-slate-400 flex-shrink-0 ml-2">{s.team_name}</span>}
+              </div>
+            ))}
+          </Section>
         </div>
       )}
+      </>)}
     </div>
   )
 }

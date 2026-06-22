@@ -14,6 +14,14 @@ class Schedule(Base):
     work_end = Column(String(10))    # HH:MM
     break_duration = Column(Integer, default=60)  # minutes
     days_of_week = Column(String(20), default="12345")  # 1=Mon..7=Sun
+    # Плавающий график (2/2, 3/3, 7/7 и т.п.): конкретные дни недели не заданы,
+    # вместо них — число рабочих дней подряд. Выбор дней недели для таких
+    # графиков неактуален и на форме отключается.
+    is_floating = Column(Boolean, default=False)
+    floating_days = Column(Integer, nullable=True)  # сколько дней «плавает»
+    # Окно обеда внутри смены (необязательно)
+    lunch_start = Column(String(10), nullable=True)  # HH:MM
+    lunch_end = Column(String(10), nullable=True)    # HH:MM
     description = Column(Text)
     created_at = Column(DateTime, server_default=func.now())
 
@@ -29,6 +37,10 @@ class Shift(Base):
     shift_date = Column(Date, nullable=False)
     start_time = Column(String(20))   # ISO datetime string
     end_time = Column(String(20))
+    # Запланированный обед в этой смене: продолжительность в минутах
+    # (если не задано/0 — без обеда) и, опционально, время начала обеда.
+    lunch_minutes = Column(Integer, nullable=True)
+    lunch_start = Column(String(20), nullable=True)
     status = Column(String(50), default="planned")  # planned, confirmed, completed, cancelled
     notes = Column(Text)
     # Фактически отработанное время (заполняется при сверке или вручную)

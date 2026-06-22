@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, ChevronRight, ChevronDown, UsersRound, Save, User, UserPlus, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronRight, ChevronDown, UsersRound, Save, User, UserPlus, X, Clock4, Eye } from 'lucide-react'
 import api from '@/api/client'
 import type { Team, Employee } from '@/types'
 import { TEAM_TYPE_LABELS } from '@/types'
@@ -10,21 +10,26 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import EmptyState from '@/components/common/EmptyState'
+import EmployeeDetailPanel from '@/components/team/EmployeeDetailPanel'
+import ShiftAssignModal from '@/components/worktime/ShiftAssignModal'
 
-function TeamForm({ team, teams, onClose }: { team?: Team | null; teams: Team[]; onClose: () => void }) {
+function TeamForm({ team, teams, projectUuid, onClose }: { team?: Team | null; teams: Team[]; projectUuid?: string; onClose: () => void }) {
   const qc = useQueryClient()
   const [form, setForm] = useState({
     name: team?.name ?? '',
     team_type: team?.team_type ?? 'group',
     parent_id: team?.parent_id ?? '' as any,
-    leader_id: team?.leader_id ?? '' as any,
+    leader_user_id: team?.leader_user_id ?? '' as any,
+    user_ids: (team?.user_ids ?? []) as number[],
     description: team?.description ?? '',
   })
   const [error, setError] = useState('')
+  const toggleUser = (id: number) =>
+    setForm((f) => ({ ...f, user_ids: f.user_ids.includes(id) ? f.user_ids.filter((x) => x !== id) : [...f.user_ids, id] }))
 
-  const { data: employees } = useQuery({
-    queryKey: ['employees-all'],
-    queryFn: () => api.get('/employees', { params: { limit: 500 } }).then((r) => r.data as Employee[]),
+  const { data: users } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => api.get('/users').then((r) => r.data as { id: number; full_name: string | null; username: string }[]),
   })
 
   const mutation = useMutation({
@@ -38,7 +43,9 @@ function TeamForm({ team, teams, onClose }: { team?: Team | null; teams: Team[];
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        mutation.mutate({ ...form, parent_id: form.parent_id || null, leader_id: form.leader_id || null })
+        const payload: any = { ...form, parent_id: form.parent_id || null, leader_user_id: form.leader_user_id || null, user_ids: form.user_ids }
+        if (!team) payload.project_uuid = projectUuid
+        mutation.mutate(payload)
       }}
       className="space-y-5"
     >
@@ -73,15 +80,27 @@ function TeamForm({ team, teams, onClose }: { team?: Team | null; teams: Team[];
             </div>
           </div>
           <div>
-            <label className="label">Руководитель</label>
-            <select className="input" value={form.leader_id} onChange={(e) => setForm({ ...form, leader_id: e.target.value })}>
+            <label className="label">Руководитель <span className="text-slate-400 font-normal">(пользователь системы)</span></label>
+            <select className="input" value={form.leader_user_id} onChange={(e) => setForm({ ...form, leader_user_id: e.target.value })}>
               <option value="">— не назначен —</option>
-              {employees?.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  {emp.full_name}{emp.position ? ` · ${emp.position}` : ''}
-                </option>
+              {users?.map((u) => (
+                <option key={u.id} value={u.id}>{u.full_name || u.username}</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="label">Отображать у пользователей <span className="text-slate-400 font-normal">(можно нескольких)</span></label>
+            <div className="border border-slate-200 rounded-lg max-h-40 overflow-y-auto divide-y divide-slate-50">
+              {(users || []).length === 0 ? (
+                <p className="text-xs text-slate-400 px-3 py-2">Нет пользователей</p>
+              ) : users!.map((u) => (
+                <label key={u.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-slate-50 text-sm">
+                  <input type="checkbox" checked={form.user_ids.includes(u.id)} onChange={() => toggleUser(u.id)} />
+                  <span className="text-slate-700">{u.full_name || u.username}</span>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-slate-400 mt-1">Команда видна всем, но это влияет на фильтр «Мои команды».</p>
           </div>
           <div>
             <label className="label">Описание</label>
@@ -207,7 +226,7 @@ function AddMemberModal({ team, onClose }: { team: Team; onClose: () => void }) 
   )
 }
 
-function TeamNode({ team, allTeams, allEmployees, level, onEdit, onDelete, onAddMember }: {
+function TeamNode({ team, allTeams, allEmployees, level, onEdit, onDelete, onAddMember, onAssignShifts, onViewShifts }: {
   team: Team
   allTeams: Team[]
   allEmployees: Employee[]
@@ -215,10 +234,13 @@ function TeamNode({ team, allTeams, allEmployees, level, onEdit, onDelete, onAdd
   onEdit: (t: Team) => void
   onDelete: (t: Team) => void
   onAddMember: (t: Team) => void
+  onAssignShifts: (e: Employee) => void
+  onViewShifts: (e: Employee) => void
 }) {
   const qc = useQueryClient()
   const [childrenOpen, setChildrenOpen] = useState(level === 0)
   const [membersOpen, setMembersOpen] = useState(false)
+  const [expandedEmpId, setExpandedEmpId] = useState<number | null>(null)
 
   const children = allTeams.filter((t) => t.parent_id === team.id)
   const members = allEmployees.filter((e) => e.team_id === team.id)
@@ -257,9 +279,9 @@ function TeamNode({ team, allTeams, allEmployees, level, onEdit, onDelete, onAdd
             : <ChevronRight size={13} className="text-slate-300 flex-shrink-0" />}
           <span className="text-sm font-medium text-slate-900">{team.name}</span>
           <span className="text-xs text-slate-400">{typeLabel}</span>
-          {team.leader_name && (
+          {team.leader_user_name && (
             <span className="text-xs text-slate-500 inline-flex items-center gap-1">
-              <User size={11} /> {team.leader_name}
+              <User size={11} /> {team.leader_user_name}
             </span>
           )}
         </div>
@@ -294,6 +316,7 @@ function TeamNode({ team, allTeams, allEmployees, level, onEdit, onDelete, onAdd
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
+                  <th className="w-6" />
                   <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">ФИО</th>
                   <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Должность</th>
                   <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Логин Naumen</th>
@@ -302,28 +325,62 @@ function TeamNode({ team, allTeams, allEmployees, level, onEdit, onDelete, onAdd
                 </tr>
               </thead>
               <tbody>
-                {members.map((emp) => (
-                  <tr key={emp.id} className="border-b border-slate-100 hover:bg-white">
-                    <td className="px-4 py-2 font-medium text-slate-900">{emp.full_name}</td>
-                    <td className="px-4 py-2 text-slate-500 text-xs">{emp.position || '—'}</td>
-                    <td className="px-4 py-2 text-slate-400 font-mono text-xs">{emp.naumen_login || '—'}</td>
-                    <td className="px-4 py-2 text-xs">
-                      {emp.employment_status === 'active' && <span className="text-green-600">Работает</span>}
-                      {emp.employment_status === 'new' && <span className="text-blue-600">Новый</span>}
-                      {emp.employment_status === 'fired' && <span className="text-slate-400">Уволен</span>}
-                    </td>
-                    <td className="px-4 py-2 text-right pr-4">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); removeMember.mutate(emp.id) }}
-                        disabled={removeMember.isPending}
-                        className="p-1 hover:bg-red-50 rounded text-slate-300 hover:text-red-500 transition-colors"
-                        title="Убрать из команды"
+                {members.map((emp) => {
+                  const empOpen = expandedEmpId === emp.id
+                  return (
+                    <Fragment key={emp.id}>
+                      <tr
+                        className={`border-b border-slate-100 hover:bg-white cursor-pointer ${empOpen ? 'bg-white' : ''}`}
+                        onClick={() => setExpandedEmpId(empOpen ? null : emp.id)}
                       >
-                        <X size={13} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                        <td className="pl-4 text-slate-400">
+                          {empOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        </td>
+                        <td className="px-4 py-2 font-medium text-slate-900">{emp.full_name}</td>
+                        <td className="px-4 py-2 text-slate-500 text-xs">{emp.position || '—'}</td>
+                        <td className="px-4 py-2 text-slate-400 font-mono text-xs">{emp.naumen_login || '—'}</td>
+                        <td className="px-4 py-2 text-xs">
+                          {emp.employment_status === 'active' && <span className="text-green-600">Работает</span>}
+                          {emp.employment_status === 'new' && <span className="text-blue-600">Новый</span>}
+                          {emp.employment_status === 'fired' && <span className="text-slate-400">Уволен</span>}
+                        </td>
+                        <td className="px-4 py-2 text-right pr-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              onClick={() => onAssignShifts(emp)}
+                              className="p-1 hover:bg-blue-50 rounded text-slate-400 hover:text-blue-600 transition-colors"
+                              title="Проставить смены"
+                            >
+                              <Clock4 size={13} />
+                            </button>
+                            <button
+                              onClick={() => onViewShifts(emp)}
+                              className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-700 transition-colors"
+                              title="Просмотреть смены"
+                            >
+                              <Eye size={13} />
+                            </button>
+                            <button
+                              onClick={() => removeMember.mutate(emp.id)}
+                              disabled={removeMember.isPending}
+                              className="p-1 hover:bg-red-50 rounded text-slate-300 hover:text-red-500 transition-colors"
+                              title="Убрать из команды"
+                            >
+                              <X size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {empOpen && (
+                        <tr className="border-b border-slate-100 bg-white">
+                          <td colSpan={6} className="px-6 py-4">
+                            <EmployeeDetailPanel emp={emp} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           )}
@@ -341,6 +398,8 @@ function TeamNode({ team, allTeams, allEmployees, level, onEdit, onDelete, onAdd
           onEdit={onEdit}
           onDelete={onDelete}
           onAddMember={onAddMember}
+          onAssignShifts={onAssignShifts}
+          onViewShifts={onViewShifts}
         />
       ))}
     </div>
@@ -351,6 +410,8 @@ export default function TeamsPage() {
   const [showForm, setShowForm] = useState(false)
   const [editTeam, setEditTeam] = useState<Team | null>(null)
   const [addMemberTeam, setAddMemberTeam] = useState<Team | null>(null)
+  const [shiftEmp, setShiftEmp] = useState<Employee | null>(null)
+  const [viewShiftsEmp, setViewShiftsEmp] = useState<Employee | null>(null)
   const qc = useQueryClient()
   const { activeProject } = useProjectStore()
 
@@ -407,15 +468,23 @@ export default function TeamsPage() {
                 onEdit={setEditTeam}
                 onDelete={(t) => confirm(`Удалить команду "${t.name}"?`) && deleteMutation.mutate(t.id)}
                 onAddMember={setAddMemberTeam}
+                onAssignShifts={setShiftEmp}
+                onViewShifts={setViewShiftsEmp}
               />
             ))}
           </div>
         )}
       </div>
 
-      {showForm && <Modal open title="Новая команда" onClose={() => setShowForm(false)}><TeamForm teams={allTeams} onClose={() => setShowForm(false)} /></Modal>}
-      {editTeam && <Modal open title="Редактировать команду" onClose={() => setEditTeam(null)}><TeamForm team={editTeam} teams={allTeams} onClose={() => setEditTeam(null)} /></Modal>}
+      {activeProject && (
+        <p className="text-xs text-slate-400 mt-4">Проект: {activeProject.customer_name}</p>
+      )}
+
+      {showForm && <Modal open title="Новая команда" onClose={() => setShowForm(false)}><TeamForm teams={allTeams} projectUuid={activeProject?.customer_uuid} onClose={() => setShowForm(false)} /></Modal>}
+      {editTeam && <Modal open title="Редактировать команду" onClose={() => setEditTeam(null)}><TeamForm team={editTeam} teams={allTeams} projectUuid={activeProject?.customer_uuid} onClose={() => setEditTeam(null)} /></Modal>}
       {addMemberTeam && <Modal open title={`Добавить сотрудника — ${addMemberTeam.name}`} onClose={() => setAddMemberTeam(null)}><AddMemberModal team={addMemberTeam} onClose={() => setAddMemberTeam(null)} /></Modal>}
+      {shiftEmp && <Modal open size="xl" title={`Смены: ${shiftEmp.full_name}`} onClose={() => setShiftEmp(null)}><ShiftAssignModal employee={shiftEmp} onClose={() => setShiftEmp(null)} /></Modal>}
+      {viewShiftsEmp && <Modal open size="xl" title={`Смены (просмотр): ${viewShiftsEmp.full_name}`} onClose={() => setViewShiftsEmp(null)}><ShiftAssignModal employee={viewShiftsEmp} readOnly onClose={() => setViewShiftsEmp(null)} /></Modal>}
     </div>
   )
 }

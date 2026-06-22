@@ -21,6 +21,7 @@ interface NavItem {
 
 const nav: NavItem[] = [
   { label: 'Сводка', icon: <LayoutDashboard size={18} />, to: '/dashboard', section: 'dashboard' },
+  { label: 'Мониторинг', icon: <Radio size={18} />, to: '/analytics/live', section: 'dashboard' },
   {
     label: 'Команда',
     icon: <Users size={18} />,
@@ -41,7 +42,6 @@ const nav: NavItem[] = [
       { label: 'Нагр. операторов',  icon: <UserCheck size={16} />,    to: '/analytics/operator-load', section: 'analytics' },
       { label: 'Внутридневная',     icon: <Clock size={16} />,         to: '/analytics/intraday', section: 'analytics' },
       { label: 'Потребность',       icon: <UsersIcon size={16} />,     to: '/analytics/staffing', section: 'analytics' },
-      { label: 'Онлайн',            icon: <Radio size={16} />,         to: '/analytics/live', section: 'analytics' },
     ],
   },
   {
@@ -63,14 +63,14 @@ const bottom: NavItem[] = [
     icon: <Settings2 size={18} />,
     section: 'settings',
     children: [
-      { label: 'Общие',    icon: <Settings2 size={16} />,    to: '/settings', section: 'settings' },
-      { label: 'Проекты',  icon: <FolderOpen size={16} />,   to: '/settings/projects', section: 'settings' },
-      { label: 'Статусы',  icon: <Tag size={16} />,          to: '/statuses', section: 'settings' },
+      { label: 'Общие',        icon: <Settings2 size={16} />,    to: '/settings', section: 'settings' },
+      { label: 'Проекты',      icon: <FolderOpen size={16} />,   to: '/settings/projects', section: 'settings' },
+      { label: 'Статусы',      icon: <Tag size={16} />,          to: '/statuses', section: 'settings' },
+      { label: 'Пользователи', icon: <UserCog size={16} />,      to: '/users', section: 'users' },
+      { label: 'Журнал',       icon: <ScrollText size={16} />,   to: '/journal', section: 'journal' },
+      { label: 'Интеграции',   icon: <Plug size={16} />,         to: '/integrations', section: 'integrations' },
     ],
   },
-  { label: 'Пользователи',  icon: <UserCog size={18} />,      to: '/users', section: 'users' },
-  { label: 'Журнал',        icon: <ScrollText size={18} />,   to: '/journal', section: 'journal' },
-  { label: 'Интеграции',    icon: <Plug size={18} />,         to: '/integrations', section: 'integrations' },
   { label: 'О системе',     icon: <Info size={18} />,         to: '/about', section: 'about' },
   { label: 'Документация',  icon: <BookOpen size={18} />,     to: '/docs', section: 'docs' },
 ]
