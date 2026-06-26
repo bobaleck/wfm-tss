@@ -30,14 +30,22 @@ function SortTh({ label, k, sort, dir, onSort }: { label: string; k: string; sor
 
 // «Мониторинг → Статистика»: одна страница — сначала «По очередям», затем «SL операторов».
 // Окно — последние N минут (до 24ч) выбирается ползунком.
-export default function MonitoringStats() {
+export default function MonitoringStats({ externalQueues }: { externalQueues?: Set<string> }) {
   const { activeProject } = useProjectStore()
   const [sliderVal, setSliderVal] = useState(1440)
   const [windowMin, setWindowMin] = useState(1440)
-  const [selectedQueues, setSelectedQueues] = useState<Set<string>>(new Set())
+  // Фильтр очередей: если передан сверху (из шапки Мониторинга) — используем его,
+  // иначе свой локальный (на случай отдельного использования компонента).
+  const [internalQueues, setInternalQueues] = useState<Set<string>>(new Set())
+  const selectedQueues = externalQueues ?? internalQueues
+  const setSelectedQueues = setInternalQueues
   const [qSort, setQSort] = useState<string>('total'); const [qDir, setQDir] = useState<'asc' | 'desc'>('desc')
   const [oSort, setOSort] = useState<string>('handled'); const [oDir, setODir] = useState<'asc' | 'desc'>('desc')
-  const [openOp, setOpenOp] = useState<string | null>(null)
+  // Раскрытые строки — наборы, чтобы можно было держать открытыми сразу несколько.
+  const [openOps, setOpenOps] = useState<Set<string>>(new Set())
+  const [openQueues, setOpenQueues] = useState<Set<string>>(new Set())
+  const toggleIn = (key: string, setFn: (fn: (p: Set<string>) => Set<string>) => void) =>
+    setFn((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n })
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ['recent-stats', activeProject?.customer_uuid, windowMin],
@@ -64,6 +72,15 @@ export default function MonitoringStats() {
   }, [shownQueues, qSort, qDir])
   const totals = shownQueues.reduce((a, q) => ({ total: a.total + q.total, handled: a.handled + q.handled, lost: a.lost + q.lost }), { total: 0, handled: 0, lost: 0 })
   const totalPct = totals.total > 0 ? Math.round(totals.handled / totals.total * 100) : 0
+
+  // Операторы каждой очереди (для раскрытия строки очереди) — из тех же данных
+  // по (оператор, очередь), из которых складывается статистика очереди.
+  const opsByQueue = useMemo(() => {
+    const m: Record<string, OQRow[]> = {}
+    for (const r of shownOpQueue) (m[r.queue_name] = m[r.queue_name] || []).push(r)
+    for (const k of Object.keys(m)) m[k].sort((a, b) => (b.handled || 0) - (a.handled || 0))
+    return m
+  }, [shownOpQueue])
 
   const operators = useMemo(() => {
     const m: Record<string, { login: string; name: string; handled: number; slSum: number; slCnt: number; ahtSum: number; ahtCnt: number; queues: OQRow[] }> = {}
@@ -105,7 +122,13 @@ export default function MonitoringStats() {
           <input type="range" min={5} max={1440} step={5} value={sliderVal}
             onChange={(e) => setSliderVal(+e.target.value)}
             onMouseUp={() => setWindowMin(sliderVal)} onTouchEnd={() => setWindowMin(sliderVal)} onKeyUp={() => setWindowMin(sliderVal)}
-            className="w-full accent-brand-600" />
+            style={{ background: `linear-gradient(to right, #2563eb 0%, #2563eb ${((sliderVal - 5) / (1440 - 5)) * 100}%, #e2e8f0 ${((sliderVal - 5) / (1440 - 5)) * 100}%, #e2e8f0 100%)` }}
+            className="w-full h-2.5 rounded-full appearance-none cursor-pointer outline-none
+              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-brand-600 [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:hover:scale-110
+              [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-brand-600 [&::-moz-range-thumb]:shadow-md [&::-moz-range-thumb]:border-solid" />
+          <div className="flex justify-between text-[10px] text-slate-400 mt-1 px-0.5">
+            <span>00:05</span><span>12:00</span><span>24:00</span>
+          </div>
           <div className="flex flex-wrap gap-1.5 mt-2">
             {[7, 30, 60, 180, 360, 720, 1440].map((m) => (
               <button key={m} onClick={() => { setSliderVal(m); setWindowMin(m) }}
@@ -115,7 +138,7 @@ export default function MonitoringStats() {
             ))}
           </div>
         </div>
-        {allQueues.length > 1 && <QueueFilterDropdown queues={allQueues} selected={selectedQueues} onChange={setSelectedQueues} align="right" />}
+        {externalQueues === undefined && allQueues.length > 1 && <QueueFilterDropdown queues={allQueues} selected={selectedQueues} onChange={setSelectedQueues} align="right" />}
       </div>
 
       {isLoading || isFetching ? <PageSpinner /> : (!byQueue.length && !byOpQueue.length) ? (
@@ -158,9 +181,13 @@ export default function MonitoringStats() {
                   <SortTh label="AHT (с)" k="aht" sort={qSort} dir={qDir} onSort={handleQSort} />
                 </tr></thead>
                 <tbody>
-                  {sortedQueues.map((q) => (
-                    <tr key={q.queue_name} className="border-b border-slate-50 hover:bg-slate-50">
-                      <td className="px-4 py-2.5 font-medium text-slate-900">{q.queue_name}</td>
+                  {sortedQueues.map((q) => {
+                    const qOpen = openQueues.has(q.queue_name)
+                    const qOps = opsByQueue[q.queue_name] || []
+                    return (
+                    <Fragment key={q.queue_name}>
+                    <tr onClick={() => toggleIn(q.queue_name, setOpenQueues)} className={`border-b border-slate-50 hover:bg-slate-50 cursor-pointer ${qOpen ? 'bg-slate-50' : ''}`}>
+                      <td className="px-4 py-2.5 font-medium text-slate-900"><span className="text-slate-400 mr-1">{qOpen ? '▾' : '▸'}</span>{q.queue_name}</td>
                       <td className="px-4 py-2.5 text-slate-700">{q.total}</td>
                       <td className="px-4 py-2.5 text-green-700">{q.handled}</td>
                       <td className="px-4 py-2.5 text-red-600">{q.lost}</td>
@@ -168,7 +195,34 @@ export default function MonitoringStats() {
                       <td className="px-4 py-2.5"><span className={slC(q.sl)}>{q.sl != null ? `${q.sl}%` : '—'}</span></td>
                       <td className="px-4 py-2.5 text-slate-600">{q.aht ?? '—'}</td>
                     </tr>
-                  ))}
+                    {qOpen && (
+                      <tr className="bg-white border-b border-slate-100"><td colSpan={7} className="px-6 py-3">
+                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Операторы очереди — из них складывается статистика</p>
+                        {qOps.length === 0 ? <p className="text-xs text-slate-400">Нет операторов за выбранное окно</p> : (
+                          <table className="w-full text-xs">
+                            <thead><tr className="text-slate-400">
+                              <th className="text-left font-medium py-1">Оператор</th>
+                              <th className="text-left font-medium py-1 w-24">Звонков</th>
+                              <th className="text-left font-medium py-1 w-24">AHT (с)</th>
+                              <th className="text-left font-medium py-1 w-20">SL</th>
+                            </tr></thead>
+                            <tbody>
+                              {qOps.map((op) => (
+                                <tr key={op.login} className="border-t border-slate-50">
+                                  <td className="py-1.5 text-slate-700">{op.employee_name || op.login}</td>
+                                  <td className="py-1.5 text-brand-600 font-medium">{op.handled}</td>
+                                  <td className="py-1.5 text-slate-600">{op.aht ?? '—'}</td>
+                                  <td className="py-1.5"><span className={slC(op.sl)}>{op.sl != null ? `${op.sl}%` : '—'}</span></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </td></tr>
+                    )}
+                    </Fragment>
+                    )
+                  })}
                   <tr className="bg-slate-50 font-semibold">
                     <td className="px-4 py-2.5">Суммарно</td>
                     <td className="px-4 py-2.5">{totals.total}</td>
@@ -199,10 +253,10 @@ export default function MonitoringStats() {
                   </tr></thead>
                   <tbody>
                     {sortedOps.map((o) => {
-                      const open = openOp === o.login
+                      const open = openOps.has(o.login)
                       return (
                         <Fragment key={o.login}>
-                          <tr onClick={() => setOpenOp(open ? null : o.login)} className={`border-b border-slate-50 hover:bg-slate-50 cursor-pointer ${open ? 'bg-slate-50' : ''}`}>
+                          <tr onClick={() => toggleIn(o.login, setOpenOps)} className={`border-b border-slate-50 hover:bg-slate-50 cursor-pointer ${open ? 'bg-slate-50' : ''}`}>
                             <td className="px-4 py-2.5 font-medium text-slate-900"><span className="text-slate-400 mr-1">{open ? '▾' : '▸'}</span>{o.name}</td>
                             <td className="px-4 py-2.5 text-brand-600 font-medium">{o.handled}</td>
                             <td className="px-4 py-2.5 text-slate-600">{o.aht ?? '—'}</td>

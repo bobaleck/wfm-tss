@@ -55,7 +55,7 @@ function buildTicks(viewStart: Date, viewEnd: Date): { time: Date; pct: number }
 
 // ─── Сама полоса временной линии (используется и в компактном, и в детальном виде) ──
 function TimelineBar({
-  data, viewStart, viewEnd, classify, label, visibleGroups, height = 36, onClick, onWheelZoom, onPanTo,
+  data, viewStart, viewEnd, classify, label, visibleGroups, height = 36, onClick, onWheelZoom, onPanTo, boundaryTimes,
 }: {
   data: TimelineEvent[]
   viewStart: Date
@@ -67,9 +67,30 @@ function TimelineBar({
   onClick?: () => void
   onWheelZoom?: (frac: number, deltaY: number) => void
   onPanTo?: (newViewStartMs: number) => void
+  // boundaryTimes — вместо регулярной сетки подписывать снизу МОМЕНТЫ смены
+  // статуса (начало каждого отрезка). Так видно, во сколько оператор перешёл,
+  // например, на паузу. Подписи прореживаются, чтобы не наезжали друг на друга.
+  boundaryTimes?: boolean
 }) {
   const totalMs = Math.max(1, viewEnd.getTime() - viewStart.getTime())
-  const ticks = useMemo(() => buildTicks(viewStart, viewEnd), [viewStart.getTime(), viewEnd.getTime()])
+  const gridTicks = useMemo(() => buildTicks(viewStart, viewEnd), [viewStart.getTime(), viewEnd.getTime()])
+  const boundaryTickList = useMemo(() => {
+    const items = data
+      .filter((e) => visibleGroups.has(effectiveGroup(e, classify)))
+      .map((e) => new Date(e.entered).getTime())
+      .filter((t) => t >= viewStart.getTime() && t <= viewEnd.getTime())
+      .sort((a, b) => a - b)
+    const out: { time: Date; pct: number }[] = []
+    let lastPct = -100
+    for (const t of items) {
+      const pct = ((t - viewStart.getTime()) / totalMs) * 100
+      if (pct - lastPct < 9) continue   // прореживание перекрывающихся подписей
+      out.push({ time: new Date(t), pct })
+      lastPct = pct
+    }
+    return out
+  }, [data, visibleGroups, classify, viewStart.getTime(), viewEnd.getTime(), totalMs])
+  const ticks = boundaryTimes ? boundaryTickList : gridTicks
 
   const dragRef = useRef<{ startX: number; baseStart: number; width: number } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -129,7 +150,7 @@ function TimelineBar({
           return (
             <div
               key={i}
-              title={`${GROUP_CONFIG[grp].label} (${label(evt.status, evt.duration_sec)}): ${evt.entered.slice(11, 16)} · ${Math.round(evt.duration_sec / 60)} мин`}
+              title={`${GROUP_CONFIG[grp].label} (${label(evt.status, evt.duration_sec)}): ${evt.entered.slice(11, 16)}–${format2(new Date(evtEnd))} · ${Math.round(evt.duration_sec / 60)} мин`}
               style={{
                 position: 'absolute',
                 left: `${left}%`,
@@ -361,7 +382,7 @@ export default function StatusTimeline({
 
   return (
     <div className="px-4 py-3 bg-white border-t border-slate-100">
-      <TimelineBar data={data} viewStart={viewStart} viewEnd={viewEnd} classify={classify} label={label} visibleGroups={allVisible} onClick={() => setShowDetail(true)} />
+      <TimelineBar data={data} viewStart={viewStart} viewEnd={viewEnd} classify={classify} label={label} visibleGroups={allVisible} onClick={() => setShowDetail(true)} boundaryTimes />
 
       <div className="flex flex-wrap items-center gap-4 mt-2">
         {presentGroups.map((g) => (

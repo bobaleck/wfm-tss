@@ -53,6 +53,8 @@ class ShiftBase(BaseModel):
     end_time: Optional[str] = None
     lunch_minutes: Optional[int] = None
     lunch_start: Optional[str] = None
+    queue_names: Optional[str] = None
+    line: Optional[str] = None
     status: str = "planned"
     notes: Optional[str] = None
 
@@ -71,6 +73,8 @@ class ShiftUpdate(BaseModel):
     end_time: Optional[str] = None
     lunch_minutes: Optional[int] = None
     lunch_start: Optional[str] = None
+    queue_names: Optional[str] = None
+    line: Optional[str] = None
     status: Optional[str] = None
     notes: Optional[str] = None
     actual_start_time: Optional[str] = None

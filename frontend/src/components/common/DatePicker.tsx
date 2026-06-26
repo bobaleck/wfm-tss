@@ -65,6 +65,10 @@ export default function DatePicker({ value, onChange, className, placeholder = '
               )
             })}
           </div>
+          <button type="button" onClick={() => { onChange(fmt(new Date())); setOpen(false) }}
+            className="w-full mt-2 text-xs text-brand-600 hover:text-brand-700 font-medium py-1.5 rounded-lg hover:bg-brand-50">
+            Сегодня
+          </button>
         </div>
       )}
     </div>

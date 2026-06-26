@@ -39,12 +39,17 @@ class IntegrationSettingsOut(BaseModel):
 
 
 class TrackedProjectIn(BaseModel):
-    customer_uuid: str
-    customer_name: str
+    # customer_uuid необязателен: при обновлении он берётся из URL, при создании
+    # вручную — генерируется. Если бы он был обязательным, PUT-редактирование
+    # (где uuid только в пути) падало бы с 422 и «Сохранить» молча не срабатывало.
+    customer_uuid: Optional[str] = None
+    customer_name: Optional[str] = None
     customer_type: Optional[str] = None
     responsible_manager: Optional[str] = None
     target_sl: Optional[int] = None
     is_manual: Optional[bool] = False
+    has_inbound: Optional[bool] = None
+    has_outbound: Optional[bool] = None
 
 
 def _build_overrides(db: Session) -> Optional[dict]:
@@ -148,6 +153,8 @@ def list_tracked_projects(db: Session = Depends(get_db), current_user: User = De
             "responsible_manager": p.responsible_manager,
             "target_sl": p.target_sl,
             "is_manual": bool(p.is_manual),
+            "has_inbound": bool(p.has_inbound) if p.has_inbound is not None else True,
+            "has_outbound": bool(p.has_outbound) if p.has_outbound is not None else False,
             "active_projects_count": 0,
             "active_incoming_count": 0,
             "active_outcoming_count": 0,
@@ -169,13 +176,19 @@ def update_tracked_project(uuid: str, body: TrackedProjectIn, db: Session = Depe
         project.responsible_manager = body.responsible_manager
     if body.target_sl is not None:
         project.target_sl = body.target_sl
+    if body.has_inbound is not None:
+        project.has_inbound = body.has_inbound
+    if body.has_outbound is not None:
+        project.has_outbound = body.has_outbound
     db.commit()
     return {"ok": True}
 
 
 @router.post("/tracked-projects", status_code=201)
 def add_tracked_project(body: TrackedProjectIn, db: Session = Depends(get_db), _=Depends(require_admin)):
-    if db.query(TrackedProject).filter(TrackedProject.customer_uuid == body.customer_uuid).first():
+    if not (body.customer_name and body.customer_name.strip()):
+        raise HTTPException(400, detail="Укажите название проекта")
+    if body.customer_uuid and db.query(TrackedProject).filter(TrackedProject.customer_uuid == body.customer_uuid).first():
         raise HTTPException(409, detail="Проект уже добавлен")
     import uuid as _uuid
     project = TrackedProject(
@@ -185,6 +198,8 @@ def add_tracked_project(body: TrackedProjectIn, db: Session = Depends(get_db), _
         responsible_manager=body.responsible_manager,
         target_sl=body.target_sl,
         is_manual=1 if body.is_manual else 0,
+        has_inbound=body.has_inbound if body.has_inbound is not None else True,
+        has_outbound=body.has_outbound if body.has_outbound is not None else False,
     )
     db.add(project)
     db.commit()

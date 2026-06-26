@@ -14,6 +14,9 @@ import WorkloadPage from '@/pages/analytics/WorkloadPage'
 import OperatorLoadPage from '@/pages/analytics/OperatorLoadPage'
 import IntradayPage from '@/pages/analytics/IntradayPage'
 import StaffingPage from '@/pages/analytics/StaffingPage'
+import OutboundPage from '@/pages/analytics/OutboundPage'
+import OutboundOperatorsPage from '@/pages/analytics/OutboundOperatorsPage'
+import OutboundLoadPage from '@/pages/analytics/OutboundLoadPage'
 import SchedulesPage from '@/pages/worktime/SchedulesPage'
 import AbsencesPage from '@/pages/worktime/AbsencesPage'
 import ShiftsPage from '@/pages/worktime/ShiftsPage'
@@ -97,6 +100,9 @@ export default function App() {
                   <Route path="/analytics/operator-load" element={<OperatorLoadPage />} />
                   <Route path="/analytics/intraday" element={<IntradayPage />} />
                   <Route path="/analytics/staffing" element={<StaffingPage />} />
+                  <Route path="/analytics/outbound" element={<OutboundPage />} />
+                  <Route path="/analytics/outbound/operators" element={<OutboundOperatorsPage />} />
+                  <Route path="/analytics/outbound/load" element={<OutboundLoadPage />} />
                   <Route path="/analytics/live" element={<LivePage />} />
                   <Route path="/worktime/schedules" element={<SchedulesPage />} />
                   <Route path="/worktime/absences" element={<AbsencesPage />} />

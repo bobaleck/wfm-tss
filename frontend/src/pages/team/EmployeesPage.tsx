@@ -320,7 +320,7 @@ function EmployeeRow({
         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1 justify-end">
             <button onClick={() => onSkills(emp)} className="p-1.5 hover:bg-purple-50 rounded-lg text-slate-400 hover:text-purple-600" title="Навыки"><Award size={13} /></button>
-            <button onClick={() => onShift(emp)} className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600" title="Проставить смены"><Clock4 size={13} /></button>
+            <button onClick={() => onShift(emp)} className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600" title="Поставить смены"><Clock4 size={13} /></button>
             <button onClick={() => onViewShifts(emp)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-700" title="Просмотреть смены"><Eye size={13} /></button>
             <button onClick={() => onEdit(emp)} className="p-1.5 hover:bg-blue-50 rounded-lg text-slate-400 hover:text-blue-600" title="Редактировать"><Pencil size={13} /></button>
             <button onClick={() => onDelete(emp)} className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600" title="Удалить"><Trash2 size={13} /></button>
@@ -398,7 +398,7 @@ function EmployeeRow({
                       onClick={(e) => { e.stopPropagation(); onShift(emp) }}
                       className="flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-medium transition-colors"
                     >
-                      <Clock4 size={13} /> Проставить смены
+                      <Clock4 size={13} /> Поставить смены
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); onViewShifts(emp) }}
@@ -773,8 +773,8 @@ export default function EmployeesPage() {
 
       {showForm && <Modal open title="Новый сотрудник" onClose={() => setShowForm(false)}><EmployeeForm onClose={() => setShowForm(false)} /></Modal>}
       {editEmployee && <Modal open title="Редактировать сотрудника" onClose={() => setEditEmployee(null)}><EmployeeForm employee={editEmployee} onClose={() => setEditEmployee(null)} /></Modal>}
-      {shiftEmployee && <Modal open size="xl" title={`Смены: ${shiftEmployee.full_name}`} onClose={() => setShiftEmployee(null)}><ShiftAssignModal employee={shiftEmployee} onClose={() => setShiftEmployee(null)} /></Modal>}
-      {viewShiftsEmployee && <Modal open size="xl" title={`Смены (просмотр): ${viewShiftsEmployee.full_name}`} onClose={() => setViewShiftsEmployee(null)}><ShiftAssignModal employee={viewShiftsEmployee} readOnly onClose={() => setViewShiftsEmployee(null)} /></Modal>}
+      {shiftEmployee && <Modal open size="xl" title={`Смены: ${shiftEmployee.full_name}`} onClose={() => setShiftEmployee(null)}><ShiftAssignModal employee={shiftEmployee} projectUuid={activeProject?.customer_uuid} onClose={() => setShiftEmployee(null)} /></Modal>}
+      {viewShiftsEmployee && <Modal open size="xl" title={`Смены (просмотр): ${viewShiftsEmployee.full_name}`} onClose={() => setViewShiftsEmployee(null)}><ShiftAssignModal employee={viewShiftsEmployee} readOnly onEdit={() => { const e = viewShiftsEmployee; setViewShiftsEmployee(null); setShiftEmployee(e) }} onClose={() => setViewShiftsEmployee(null)} /></Modal>}
       {skillsEmployee && (
         <Modal open title="Навыки сотрудника" onClose={() => setSkillsEmployee(null)}>
           <SkillsModal

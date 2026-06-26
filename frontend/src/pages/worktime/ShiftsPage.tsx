@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, Clock4, Save, CheckCircle, AlertTriangle, Download, RefreshCw, ChevronRight, ChevronLeft, ChevronDown, Activity, Eye, X, Target, CalendarDays } from 'lucide-react'
+import { Plus, Pencil, Trash2, Clock4, Save, CheckCircle, AlertTriangle, Download, RefreshCw, ChevronRight, ChevronLeft, ChevronDown, Activity, Eye, X, Check, CalendarDays, Search } from 'lucide-react'
 import api from '@/api/client'
 import type { Shift, OperatorSession, Employee, Team } from '@/types'
 import { SHIFT_STATUSES } from '@/types'
@@ -12,9 +12,12 @@ import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import EmptyState from '@/components/common/EmptyState'
 import { format, subDays, addDays, startOfMonth, endOfMonth, startOfWeek, addMonths, isSameMonth } from 'date-fns'
+// (startOfMonth/endOfMonth используются и для периода выгрузки Excel)
 import StatusTimeline from '@/components/StatusTimeline'
 import ShiftAssignModal from '@/components/worktime/ShiftAssignModal'
 import DatePicker from '@/components/common/DatePicker'
+import DateRangePicker from '@/components/common/DateRangePicker'
+import TimeSelect from '@/components/common/TimeSelect'
 
 type ShiftSortKey = 'employee_name' | 'shift_date' | 'start_time' | 'end_time' | 'schedule_name' | 'status' | 'actual_hours_worked'
 type SessionSortKey = 'employee_name' | 'first_login' | 'last_logout' | 'normal_sec' | 'non_normal_sec' | 'offline_sec' | 'shift_sec' | 'break_count'
@@ -72,17 +75,86 @@ function dayCoverageHours(dayStr: string, shifts: Shift[]): number {
   return total / 3600000
 }
 
+// Объединённые интервалы смен дня в ЧАСАХ суток [0..24] (для часовой заливки круга).
+function dayCoverageSegments(dayStr: string, shifts: Shift[]): [number, number][] {
+  const dayStart = new Date(dayStr + 'T00:00:00').getTime()
+  const dayEnd = dayStart + 24 * 3600 * 1000
+  const iv: [number, number][] = []
+  for (const s of shifts) {
+    if (!s.start_time || !s.end_time) continue
+    const a = Math.max(new Date(s.start_time).getTime(), dayStart)
+    const b = Math.min(new Date(s.end_time).getTime(), dayEnd)
+    if (b > a) iv.push([(a - dayStart) / 3600000, (b - dayStart) / 3600000])
+  }
+  if (!iv.length) return []
+  iv.sort((x, y) => x[0] - y[0])
+  const merged: [number, number][] = [iv[0]]
+  for (let i = 1; i < iv.length; i++) {
+    const last = merged[merged.length - 1]
+    if (iv[i][0] <= last[1]) last[1] = Math.max(last[1], iv[i][1])
+    else merged.push(iv[i])
+  }
+  return merged
+}
+
+// Заливка круга-дня ПО ЧАСАМ суток (а не пропорционально): 00:00 — вверху, далее
+// по часовой стрелке (06:00 — справа, 12:00 — внизу, 18:00 — слева). Так смена
+// 06:00–18:00 закрашивает нижнюю половину. fill — цвет покрытых часов.
+function conicFromSegments(segs: [number, number][], fill = '#22c55e', empty = '#e2e8f0'): string {
+  if (!segs.length) return empty
+  const stops: string[] = []
+  let prev = 0
+  for (const [a, b] of segs) {
+    const aDeg = (a / 24) * 360, bDeg = (b / 24) * 360
+    if (aDeg > prev) stops.push(`${empty} ${prev}deg ${aDeg}deg`)
+    stops.push(`${fill} ${aDeg}deg ${bDeg}deg`)
+    prev = bDeg
+  }
+  if (prev < 360) stops.push(`${empty} ${prev}deg 360deg`)
+  return `conic-gradient(${stops.join(', ')})`
+}
+
+// Линия смены: входящая, если в line есть 'in' ИЛИ линия не задана (по умолчанию
+// вход); исходящая — если в line есть 'out'. Смена 'in,out' идёт в обе.
+function shiftIsInbound(s: Shift): boolean {
+  const l = s.line ? String(s.line) : ''
+  return !l || l.includes('in')
+}
+function shiftIsOutbound(s: Shift): boolean {
+  return !!(s.line && String(s.line).includes('out'))
+}
+
+// Рабочие минуты смены = плановая длительность минус обед.
+function shiftWorkMinutes(s: Shift): number {
+  if (!s.start_time || !s.end_time) return 0
+  const mins = (new Date(s.end_time).getTime() - new Date(s.start_time).getTime()) / 60000 - (s.lunch_minutes || 0)
+  return Math.max(0, mins)
+}
+function fmtHoursMinutes(totalMin: number): string {
+  const m = Math.round(totalMin)
+  const h = Math.floor(m / 60)
+  const min = m % 60
+  if (h && min) return `${h} ${h % 10 === 1 && h % 100 !== 11 ? 'час' : (h % 10 >= 2 && h % 10 <= 4 && (h % 100 < 10 || h % 100 >= 20)) ? 'часа' : 'часов'} ${min} мин`
+  if (h) return `${h} ${h % 10 === 1 && h % 100 !== 11 ? 'час' : (h % 10 >= 2 && h % 10 <= 4 && (h % 100 < 10 || h % 100 >= 20)) ? 'часа' : 'часов'}`
+  return `${min} мин`
+}
+
 // ─── Вкладка «Проставить смены»: список сотрудников + календарь покрытия ──────
 function AssignShiftsView() {
   const { activeProject } = useProjectStore()
   const { user: me } = useAuthStore()
   const [myTeamsOnly, setMyTeamsOnly] = useState(false)
+  const [empSearch, setEmpSearch] = useState('')
   const [openTeams, setOpenTeams] = useState<Set<string>>(new Set())
-  const [assignEmp, setAssignEmp] = useState<Employee | null>(null)
+  // Модалка проставления смен: empIds — кому ставим (можно нескольким сразу,
+  // в самой модалке состав можно дополнить галочками).
+  const [assign, setAssign] = useState<{ empIds: number[]; date: string | null } | null>(null)
   const [viewEmp, setViewEmp] = useState<Employee | null>(null)
   const [calMonth, setCalMonth] = useState(() => startOfMonth(new Date()))
-  const [activeOp, setActiveOp] = useState<Employee | null>(null)
+  const [selectedOps, setSelectedOps] = useState<Set<number>>(new Set())
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+  const [periodFrom, setPeriodFrom] = useState('')
+  const [periodTo, setPeriodTo] = useState('')
 
   const { data: employees } = useQuery({
     queryKey: ['employees', activeProject?.customer_uuid],
@@ -101,99 +173,106 @@ function AssignShiftsView() {
     queryFn: () => api.get('/schedules/shifts', { params: { project_uuid: activeProject?.customer_uuid, date_from: monthFrom, date_to: monthTo } }).then((r) => r.data as Shift[]),
     enabled: !!activeProject,
   })
+  // Смены за выбранный период (список по датам)
+  const hasPeriod = !!periodFrom && !!periodTo
+  const { data: periodShifts } = useQuery({
+    queryKey: ['assign-period-shifts', activeProject?.customer_uuid, periodFrom, periodTo],
+    queryFn: () => api.get('/schedules/shifts', { params: { project_uuid: activeProject?.customer_uuid, date_from: periodFrom, date_to: periodTo } }).then((r) => r.data as Shift[]),
+    enabled: !!activeProject && hasPeriod,
+  })
 
   if (!activeProject) return <div className="card p-6 text-sm text-amber-700 bg-amber-50">Выберите проект в шапке</div>
 
   const isMyTeam = (t: Team) => !!me && (t.leader_user_id === me.id || (t.user_ids || []).includes(me.id))
   const activeEmps = (employees || []).filter((e) => e.employment_status !== 'fired')
+  const searchedEmps = empSearch.trim()
+    ? activeEmps.filter((e) => (e.full_name || '').toLowerCase().includes(empSearch.trim().toLowerCase()))
+    : activeEmps
   const byTeam: Record<number, Employee[]> = {}
   const noTeam: Employee[] = []
-  for (const e of activeEmps) {
+  for (const e of searchedEmps) {
     if (e.team_id == null) noTeam.push(e)
     else (byTeam[e.team_id] = byTeam[e.team_id] || []).push(e)
   }
-  // «Мои команды» показываем даже без сотрудников (раньше пустая команда пропадала).
-  const visibleTeams = (teams || []).filter((t) => (myTeamsOnly ? isMyTeam(t) : (byTeam[t.id]?.length)))
+  // Показываем ВСЕ команды проекта (в т.ч. пустые), либо только свои.
+  const visibleTeams = (teams || []).filter((t) => (myTeamsOnly ? isMyTeam(t) : true))
   const toggleTeam = (k: string) => setOpenTeams((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n })
+  const toggleOp = (id: number) => setSelectedOps((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
+  // «Выбрать всех» по команде — добавляет к уже выбранным, не сбрасывая.
+  const selectMany = (ids: number[]) => setSelectedOps((p) => { const n = new Set(p); ids.forEach((id) => n.add(id)); return n })
 
-  // Календарь покрытия
-  const shownShifts = (monthShifts || []).filter((s) => !activeOp || s.employee_id === activeOp.id)
+  // Календарь покрытия — фильтр по выбранным сотрудникам (если выбраны).
+  const shownShifts = (monthShifts || []).filter((s) => selectedOps.size === 0 || selectedOps.has(s.employee_id))
   const shiftsByDay: Record<string, Shift[]> = {}
   for (const s of shownShifts) (shiftsByDay[s.shift_date] = shiftsByDay[s.shift_date] || []).push(s)
   const calCells = Array.from({ length: 42 }, (_, i) => addDays(startOfWeek(startOfMonth(calMonth), { weekStartsOn: 1 }), i))
   const empName = (id: number) => activeEmps.find((e) => e.id === id)?.full_name || `#${id}`
+  // Единственный выбранный сотрудник — чтобы предложить «Проставить смену» в пустой день
+  const onlyOpId = selectedOps.size === 1 ? [...selectedOps][0] : null
+  const onlyOp = onlyOpId != null ? activeEmps.find((e) => e.id === onlyOpId) : null
 
-  const EmpCard = ({ e }: { e: Employee }) => (
-    <div className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 border-b border-slate-50 last:border-0">
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-slate-800 truncate">{e.full_name}</p>
-        <p className="text-xs text-slate-400 truncate">{e.position || '—'} · приоритетный график: {e.preferred_schedule || '—'}</p>
+  // Список смен за период — по датам по порядку (с учётом выбранных сотрудников)
+  const periodList = (periodShifts || [])
+    .filter((s) => selectedOps.size === 0 || selectedOps.has(s.employee_id))
+    .sort((a, b) => a.shift_date.localeCompare(b.shift_date) || (a.start_time || '').localeCompare(b.start_time || ''))
+  const periodByDate: [string, Shift[]][] = []
+  for (const s of periodList) {
+    if (!periodByDate.length || periodByDate[periodByDate.length - 1][0] !== s.shift_date) periodByDate.push([s.shift_date, []])
+    periodByDate[periodByDate.length - 1][1].push(s)
+  }
+
+  const EmpCard = ({ e }: { e: Employee }) => {
+    const sel = selectedOps.has(e.id)
+    return (
+      <div onClick={() => toggleOp(e.id)}
+        className={`flex items-center justify-between px-4 py-2.5 border-b border-slate-50 last:border-0 cursor-pointer transition-colors ${sel ? 'bg-brand-50' : 'hover:bg-slate-50'}`}>
+        <div className="min-w-0 flex items-center gap-2.5">
+          <span className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border-2 transition-colors ${sel ? 'bg-brand-500 border-brand-500' : 'border-slate-300 bg-white'}`}>
+            {sel && <Check size={11} className="text-white" strokeWidth={3} />}
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-slate-800 truncate">{e.full_name}</p>
+            <p className="text-xs text-slate-400 truncate">{e.position || '—'} · приоритетный график: {e.preferred_schedule || '—'}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0" onClick={(ev) => ev.stopPropagation()}>
+          <button onClick={() => setAssign({ empIds: selectedOps.size > 0 ? [...new Set([...selectedOps, e.id])] : [e.id], date: null })} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-medium"><Clock4 size={13} /> Поставить смены</button>
+          <button onClick={() => setViewEmp(e)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700" title="Просмотреть смены"><Eye size={13} /></button>
+        </div>
       </div>
-      <div className="flex items-center gap-1 flex-shrink-0">
-        <button onClick={() => { setActiveOp(e); setSelectedDay(null) }} title="Показать смены в календаре"
-          className={`p-1.5 rounded-lg text-xs font-medium ${activeOp?.id === e.id ? 'bg-brand-100 text-brand-700' : 'hover:bg-slate-100 text-slate-400 hover:text-brand-600'}`}>
-          <Target size={13} />
-        </button>
-        <button onClick={() => setAssignEmp(e)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-medium"><Clock4 size={13} /> Проставить смены</button>
-        <button onClick={() => setViewEmp(e)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700" title="Просмотреть смены"><Eye size={13} /></button>
-      </div>
-    </div>
-  )
+    )
+  }
+
+  const dayShifts = selectedDay ? [...(shiftsByDay[selectedDay] || [])].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || '')) : []
+  const dayWorkMin = dayShifts.reduce((t, s) => t + shiftWorkMinutes(s), 0)
+  const periodWorkMin = periodList.reduce((t, s) => t + shiftWorkMinutes(s), 0)
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <label className="flex items-center gap-2.5 cursor-pointer select-none">
-          <input type="checkbox" checked={myTeamsOnly} onChange={(e) => setMyTeamsOnly(e.target.checked)} />
-          <span className="text-sm font-medium text-slate-700">Мои команды</span>
-        </label>
-        <p className="text-xs text-slate-400">Сотрудников: {activeEmps.length}</p>
-      </div>
-
-      <div className="space-y-3 mb-6">
-        {visibleTeams.map((t) => {
-          const emps = byTeam[t.id] || []
-          const open = openTeams.has(`t${t.id}`)
-          return (
-            <div key={t.id} className="card overflow-hidden">
-              <button onClick={() => toggleTeam(`t${t.id}`)} className="w-full flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-left">
-                {open ? <ChevronDown size={15} className="text-slate-400" /> : <ChevronRight size={15} className="text-slate-400" />}
-                <span className="font-medium text-slate-800">{t.name}</span>
-                <Badge label={`${emps.length} чел.`} color="blue" />
-                {isMyTeam(t) && <span className="text-xs text-brand-600 font-medium">моя</span>}
-              </button>
-              {open && (emps.length ? <div>{emps.map((e) => <EmpCard key={e.id} e={e} />)}</div>
-                : <p className="px-4 py-3 text-xs text-slate-400 italic">В команде нет сотрудников</p>)}
+      <div className="flex flex-col xl:flex-row gap-6 items-start">
+        {/* A: Календарь открытия смен — закреплён, всегда перед глазами.
+            xl:z-20 — чтобы выпадашка периода была поверх соседней колонки смен. */}
+        <div className="w-full xl:w-[360px] flex-shrink-0 xl:sticky xl:top-4 xl:z-20">
+          <div className="card p-5">
+            <div className="flex items-center justify-center gap-2 mb-3">
+              <CalendarDays size={16} className="text-brand-500" />
+              <h2 className="text-sm font-semibold text-slate-800">Календарь покрытия смен</h2>
             </div>
-          )
-        })}
 
-        {!myTeamsOnly && noTeam.length > 0 && (
-          <div className="card overflow-hidden">
-            <button onClick={() => toggleTeam('none')} className="w-full flex items-center gap-2 px-4 py-3 hover:bg-slate-50 text-left">
-              {openTeams.has('none') ? <ChevronDown size={15} className="text-slate-400" /> : <ChevronRight size={15} className="text-slate-400" />}
-              <span className="font-medium text-slate-800">Без команды</span>
-              <Badge label={`${noTeam.length} чел.`} color="gray" />
-            </button>
-            {openTeams.has('none') && <div>{noTeam.map((e) => <EmpCard key={e.id} e={e} />)}</div>}
-          </div>
-        )}
+            {/* Период — по центру под заголовком */}
+            <div className="flex items-center justify-center gap-2 mb-4">
+              <DateRangePicker begin={periodFrom} end={periodTo} align="left"
+                onChange={(b, e) => { setPeriodFrom(b); setPeriodTo(e); setSelectedDay(null); if (b) setCalMonth(startOfMonth(new Date(b + 'T00:00:00'))) }} />
+              {hasPeriod && (
+                <button onClick={() => { setPeriodFrom(''); setPeriodTo('') }} className="text-xs text-slate-400 hover:text-red-500">сброс</button>
+              )}
+            </div>
+            <div className="flex items-center justify-center gap-4 mb-3 text-[11px] text-slate-400">
+              <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Вход</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-pink-500" /> Исход</span>
+            </div>
 
-        {visibleTeams.length === 0 && (myTeamsOnly || noTeam.length === 0) && (
-          <EmptyState title={myTeamsOnly ? 'Нет ваших команд' : 'Нет сотрудников'} icon={<Clock4 size={40} />} />
-        )}
-      </div>
-
-      {/* Календарь покрытия смен */}
-      <div className="card p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <CalendarDays size={16} className="text-brand-500" />
-          <h2 className="text-sm font-semibold text-slate-800">Календарь покрытия смен</h2>
-          <span className="text-xs text-slate-400">— заливка дня = доля закрытых часов (0–24ч)</span>
-        </div>
-        <div className="flex flex-col lg:flex-row gap-6">
-          {/* Календарь */}
-          <div className="lg:w-[360px] flex-shrink-0">
+            {/* Навигация по месяцам */}
             <div className="flex items-center justify-between mb-3">
               <button type="button" onClick={() => setCalMonth((m) => addMonths(m, -1))} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"><ChevronLeft size={16} /></button>
               <span className="text-sm font-semibold text-slate-800">{CAL_MONTHS[calMonth.getMonth()]} {calMonth.getFullYear()}</span>
@@ -206,70 +285,206 @@ function AssignShiftsView() {
               {calCells.map((c) => {
                 const ds = format(c, 'yyyy-MM-dd')
                 const inM = isSameMonth(c, calMonth)
-                const hours = dayCoverageHours(ds, shiftsByDay[ds] || [])
-                const pct = Math.min(1, hours / 24)
-                const deg = pct * 360
-                const isSel = ds === selectedDay && !activeOp
+                const dayAll = shiftsByDay[ds] || []
+                const inSegs = dayCoverageSegments(ds, dayAll.filter(shiftIsInbound))   // зелёный — вход
+                const outSegs = dayCoverageSegments(ds, dayAll.filter(shiftIsOutbound)) // розовый — исход
+                const inH = inSegs.reduce((t, [a, b]) => t + (b - a), 0)
+                const outH = outSegs.reduce((t, [a, b]) => t + (b - a), 0)
+                const isSel = ds === selectedDay
+                const inPeriod = hasPeriod && ds >= periodFrom && ds <= periodTo
                 return (
                   <button key={ds} type="button"
-                    onClick={() => { if (!activeOp) setSelectedDay(isSel ? null : ds) }}
-                    title={`${dispD(ds)} · покрыто ${hours.toFixed(1)}ч`}
-                    className={`flex items-center justify-center ${activeOp ? 'cursor-default' : 'cursor-pointer'}`}>
-                    <div className={`relative w-10 h-10 rounded-full ${isSel ? 'ring-2 ring-brand-500 ring-offset-1' : ''}`}
-                      style={{ background: `conic-gradient(#22c55e ${deg}deg, #e2e8f0 ${deg}deg)` }}>
-                      <div className={`absolute inset-[3px] rounded-full bg-white flex items-center justify-center text-xs font-medium ${inM ? 'text-slate-700' : 'text-slate-300'}`}>
-                        {c.getDate()}
+                    onClick={() => { if (hasPeriod) { setPeriodFrom(''); setPeriodTo('') } setSelectedDay(isSel ? null : ds) }}
+                    title={`${dispD(ds)} · вход ${inH.toFixed(1)}ч · исход ${outH.toFixed(1)}ч`}
+                    className="flex items-center justify-center cursor-pointer">
+                    <div className={`relative w-10 h-10 rounded-full ${(isSel || inPeriod) ? 'ring-2 ring-brand-500 ring-offset-1' : ''}`}
+                      style={{ background: conicFromSegments(inSegs, '#22c55e') }}>
+                      {/* Внутренний розовый круг — покрытие исходящих смен */}
+                      <div className="absolute inset-[4px] rounded-full" style={{ background: conicFromSegments(outSegs, '#ec4899') }}>
+                        <div className={`absolute inset-[4px] rounded-full bg-white flex items-center justify-center text-xs font-medium ${inM ? 'text-slate-700' : 'text-slate-300'}`}>
+                          {c.getDate()}
+                        </div>
                       </div>
                     </div>
                   </button>
                 )
               })}
             </div>
+
+            {/* Планка выбранных — ПОД календарём, чтобы выбор сотрудника не «двигал» календарь */}
+            {selectedOps.size > 0 && (
+              <div className="mt-4 flex flex-wrap items-center gap-2 bg-brand-500/10 border border-brand-200 rounded-lg px-3 py-2">
+                <span className="text-xs font-semibold text-brand-700">Выбрано ({selectedOps.size}):</span>
+                {[...selectedOps].map((id) => (
+                  <span key={id} className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 bg-white/80 border border-brand-200 rounded-md text-xs text-brand-800">
+                    {empName(id)}
+                    <button onClick={() => toggleOp(id)} className="text-brand-400 hover:text-red-500 p-0.5"><X size={11} /></button>
+                  </span>
+                ))}
+                <button onClick={() => setSelectedOps(new Set())} className="text-xs text-slate-400 hover:text-red-500 ml-1">Сбросить всех</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* B: Список смен (при нажатии на день / период) — тоже закреплён, но
+            под календарём по z-оси (xl:z-10), чтобы не перекрывать его выпадашку */}
+        <div className="w-full xl:flex-1 min-w-0 card p-5 xl:sticky xl:top-4 xl:self-start xl:z-10">
+          {hasPeriod ? (
+            <>
+              <p className="text-sm font-semibold text-slate-800 mb-2">
+                {selectedOps.size > 0 ? 'Смены выбранных' : 'Смены'} за период · {dispD(periodFrom)}–{dispD(periodTo)}
+              </p>
+              <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+                {periodByDate.length === 0 ? <p className="text-sm text-slate-400">За период смен нет</p> :
+                  periodByDate.map(([date, list]) => (
+                    <div key={date}>
+                      <p className="text-xs font-semibold text-slate-400 mb-0.5">{dispD(date)}</p>
+                      {list.map((s) => (
+                        <div key={s.id} className="flex items-center justify-between text-sm px-3 py-1 rounded-lg hover:bg-slate-50 group">
+                          <span className="text-slate-700 truncate">{s.employee_name || empName(s.employee_id)}</span>
+                          <span className="flex items-center gap-2 flex-shrink-0 ml-2">
+                            <button onClick={() => setAssign({ empIds: [s.employee_id], date: s.shift_date })}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-brand-600 hover:text-brand-700 inline-flex items-center gap-1">
+                              <Pencil size={11} /> Изм.
+                            </button>
+                            <span className="text-slate-500">{s.start_time?.slice(11, 16)}–{s.end_time?.slice(11, 16)}{s.lunch_minutes ? ` · обед ${s.lunch_minutes}м` : ''}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+              </div>
+              <div className="border-t border-slate-100 mt-3 pt-3 flex items-center justify-between">
+                <span className="text-sm font-semibold text-slate-700">Итог рабочих часов:</span>
+                <span className="text-sm font-bold text-brand-700">{fmtHoursMinutes(periodWorkMin)}</span>
+              </div>
+            </>
+          ) : selectedDay ? (
+            <>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-sm font-semibold text-slate-800">
+                  {selectedOps.size > 0 ? 'Смены выбранных' : 'Смены'} на {dispD(selectedDay)}
+                </p>
+                {/* Кнопка доступна всегда — можно добавить ещё смену (гибкий график) */}
+                <button onClick={() => setAssign({ empIds: [...selectedOps], date: selectedDay })}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-medium flex-shrink-0">
+                  <Plus size={13} /> Поставить смену
+                </button>
+              </div>
+              <div className="space-y-1 max-h-[55vh] overflow-y-auto">
+                {dayShifts.length === 0 ? (
+                  <p className="text-sm text-slate-400">На этот день смен нет — нажмите «Поставить смену».</p>
+                ) : dayShifts.map((s) => (
+                  <div key={s.id} className="flex items-center justify-between text-sm px-3 py-1.5 rounded-lg hover:bg-slate-50 group">
+                    <span className="text-slate-700 truncate flex items-center gap-1.5">
+                      {s.employee_name || empName(s.employee_id)}
+                      {shiftIsOutbound(s) && <span className="text-[10px] px-1 rounded bg-pink-100 text-pink-600">исход</span>}
+                    </span>
+                    <span className="flex items-center gap-2 flex-shrink-0 ml-2">
+                      <button onClick={() => setAssign({ empIds: [s.employee_id], date: s.shift_date })}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-brand-600 hover:text-brand-700 inline-flex items-center gap-1">
+                        <Pencil size={11} /> Редактировать
+                      </button>
+                      <span className="text-slate-500">{s.start_time?.slice(11, 16)}–{s.end_time?.slice(11, 16)}{s.lunch_minutes ? ` · обед ${s.lunch_minutes}м` : ''}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-slate-100 mt-3 pt-3 flex items-center justify-between">
+                <span className="text-sm font-semibold text-slate-700">Итог рабочих часов:</span>
+                <span className="text-sm font-bold text-brand-700">{fmtHoursMinutes(dayWorkMin)}</span>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-400">
+              Выберите сотрудников в списке справа (клик по строке) — календарь покажет их покрытие. Нажмите на день или выберите период, чтобы увидеть смены по датам.
+            </p>
+          )}
+        </div>
+
+        {/* C: Команды и сотрудники — равная ширина со списком смен */}
+        <div className="w-full xl:flex-1 min-w-0">
+          <div className="mb-3 space-y-2">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input value={empSearch} onChange={(e) => setEmpSearch(e.target.value)} placeholder="Поиск сотрудника…"
+                className="input pl-8 py-1.5 text-sm w-full" />
+            </div>
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input type="checkbox" checked={myTeamsOnly} onChange={(e) => setMyTeamsOnly(e.target.checked)} />
+                <span className="text-sm font-medium text-slate-700">Мои команды</span>
+              </label>
+              <p className="text-xs text-slate-400">Сотрудников: {activeEmps.length}</p>
+            </div>
           </div>
 
-          {/* Правая часть: оператор или день */}
-          <div className="flex-1 min-w-0 border-l border-slate-100 lg:pl-6">
-            {activeOp ? (
-              <>
-                <div className="flex items-center justify-between bg-brand-50 border border-brand-200 rounded-lg px-3 py-2 mb-3">
-                  <span className="text-sm font-medium text-brand-800 truncate">{activeOp.full_name}</span>
-                  <button onClick={() => setActiveOp(null)} className="text-brand-400 hover:text-red-500 flex-shrink-0"><X size={15} /></button>
-                </div>
-                <p className="text-xs text-slate-400 mb-2">Смены за {CAL_MONTHS[calMonth.getMonth()].toLowerCase()}</p>
-                <div className="space-y-1 max-h-72 overflow-y-auto">
-                  {shownShifts.length === 0 ? <p className="text-sm text-slate-400">Нет смен в этом месяце</p> :
-                    [...shownShifts].sort((a, b) => a.shift_date.localeCompare(b.shift_date)).map((s) => (
-                      <div key={s.id} className="flex items-center justify-between text-sm px-3 py-1.5 rounded-lg hover:bg-slate-50">
-                        <span className="text-slate-700">{dispD(s.shift_date)}</span>
-                        <span className="text-slate-500">{s.start_time?.slice(11, 16)}–{s.end_time?.slice(11, 16)}{s.lunch_minutes ? ` · обед ${s.lunch_minutes}м` : ''}</span>
+          <div className="space-y-3">
+            {visibleTeams.map((t) => {
+              const emps = byTeam[t.id] || []
+              const open = openTeams.has(`t${t.id}`) || (!!empSearch.trim() && emps.length > 0)
+              const teamEmpIds = activeEmps.filter((e) => e.team_id === t.id).map((e) => e.id)
+              return (
+                <div key={t.id} className="card overflow-hidden">
+                  <div className="w-full flex items-center gap-2 px-4 py-3 hover:bg-slate-50">
+                    <button onClick={() => toggleTeam(`t${t.id}`)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
+                      {open ? <ChevronDown size={15} className="text-slate-400 flex-shrink-0" /> : <ChevronRight size={15} className="text-slate-400 flex-shrink-0" />}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-slate-800 truncate">{t.name}</span>
+                          <Badge label={`${emps.length} чел.`} color="blue" />
+                          {isMyTeam(t) && <span className="text-xs text-brand-600 font-medium">моя</span>}
+                        </div>
+                        {teamEmpIds.length > 0 && (
+                          <span onClick={(ev) => { ev.stopPropagation(); selectMany(teamEmpIds) }}
+                            className="text-xs text-brand-600 hover:text-brand-700 hover:underline cursor-pointer">Выбрать всех</span>
+                        )}
                       </div>
-                    ))}
+                    </button>
+                  </div>
+                  {open && (emps.length ? <div>{emps.map((e) => <EmpCard key={e.id} e={e} />)}</div>
+                    : <p className="px-4 py-3 text-xs text-slate-400 italic">В команде нет сотрудников</p>)}
                 </div>
-              </>
-            ) : selectedDay ? (
-              <>
-                <p className="text-sm font-semibold text-slate-800 mb-2">Смены на {dispD(selectedDay)}</p>
-                <div className="space-y-1 max-h-72 overflow-y-auto">
-                  {(shiftsByDay[selectedDay] || []).length === 0 ? <p className="text-sm text-slate-400">На этот день никто не назначен</p> :
-                    [...(shiftsByDay[selectedDay] || [])].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || '')).map((s) => (
-                      <div key={s.id} className="flex items-center justify-between text-sm px-3 py-1.5 rounded-lg hover:bg-slate-50">
-                        <span className="text-slate-700 truncate">{s.employee_name || empName(s.employee_id)}</span>
-                        <span className="text-slate-500 flex-shrink-0 ml-2">{s.start_time?.slice(11, 16)}–{s.end_time?.slice(11, 16)}</span>
+              )
+            })}
+
+            {!myTeamsOnly && noTeam.length > 0 && (() => {
+              const noTeamOpen = openTeams.has('none') || !!empSearch.trim()
+              const noTeamAllIds = activeEmps.filter((e) => e.team_id == null).map((e) => e.id)
+              return (
+              <div className="card overflow-hidden">
+                <div className="w-full flex items-center gap-2 px-4 py-3 hover:bg-slate-50">
+                  <button onClick={() => toggleTeam('none')} className="flex items-center gap-2 flex-1 min-w-0 text-left">
+                    {noTeamOpen ? <ChevronDown size={15} className="text-slate-400 flex-shrink-0" /> : <ChevronRight size={15} className="text-slate-400 flex-shrink-0" />}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-slate-800">Без команды</span>
+                        <Badge label={`${noTeam.length} чел.`} color="gray" />
                       </div>
-                    ))}
+                      {noTeamAllIds.length > 0 && (
+                        <span onClick={(ev) => { ev.stopPropagation(); selectMany(noTeamAllIds) }}
+                          className="text-xs text-brand-600 hover:text-brand-700 hover:underline cursor-pointer">Выбрать всех</span>
+                      )}
+                    </div>
+                  </button>
                 </div>
-              </>
-            ) : (
-              <p className="text-sm text-slate-400">
-                Нажмите на день — увидите, кто на него назначен. Кнопка <Target size={12} className="inline" /> у сотрудника покажет в календаре только его смены.
-              </p>
+                {noTeamOpen && <div>{noTeam.map((e) => <EmpCard key={e.id} e={e} />)}</div>}
+              </div>
+              )
+            })()}
+
+            {visibleTeams.length === 0 && (myTeamsOnly || noTeam.length === 0) && (
+              <EmptyState title={myTeamsOnly ? 'Нет ваших команд' : 'Нет сотрудников'} icon={<Clock4 size={40} />} />
             )}
           </div>
         </div>
       </div>
 
-      {assignEmp && <Modal open size="xl" title={`Смены: ${assignEmp.full_name}`} onClose={() => setAssignEmp(null)}><ShiftAssignModal employee={assignEmp} onClose={() => setAssignEmp(null)} /></Modal>}
-      {viewEmp && <Modal open size="xl" title={`Смены (просмотр): ${viewEmp.full_name}`} onClose={() => setViewEmp(null)}><ShiftAssignModal employee={viewEmp} readOnly onClose={() => setViewEmp(null)} /></Modal>}
+      {assign && <Modal open size="xl" title="Поставить смены" onClose={() => setAssign(null)}>
+        <ShiftAssignModal initialEmpIds={assign.empIds} employees={activeEmps} projectUuid={activeProject.customer_uuid}
+          initialDate={assign.date ?? undefined} onClose={() => setAssign(null)} /></Modal>}
+      {viewEmp && <Modal open size="xl" title={`Смены (просмотр): ${viewEmp.full_name}`} onClose={() => setViewEmp(null)}><ShiftAssignModal employee={viewEmp} readOnly onEdit={() => { const id = viewEmp.id; setViewEmp(null); setAssign({ empIds: [id], date: null }) }} onClose={() => setViewEmp(null)} /></Modal>}
     </div>
   )
 }
@@ -313,120 +528,51 @@ function exportCSV(shifts: Shift[]) {
   URL.revokeObjectURL(url)
 }
 
-// ─── Форма создания/редактирования смены ────────────────────────────────────
-function ShiftForm({ shift, onClose }: { shift?: Shift | null; onClose: () => void }) {
-  const qc = useQueryClient()
-  const { data: employees } = useQuery({ queryKey: ['employees'], queryFn: () => api.get('/employees').then((r) => r.data as any[]) })
-  const { data: schedules } = useQuery({ queryKey: ['schedules'], queryFn: () => api.get('/schedules').then((r) => r.data as any[]) })
-  const [form, setForm] = useState({
-    employee_id: shift?.employee_id ?? '' as any,
-    schedule_id: shift?.schedule_id ?? '' as any,
-    shift_date: shift?.shift_date ?? format(new Date(), 'yyyy-MM-dd'),
-    start_time: shift?.start_time?.slice(0, 16) ?? '',
-    end_time: shift?.end_time?.slice(0, 16) ?? '',
-    lunch_minutes: (shift?.lunch_minutes ?? '') as any,
-    status: shift?.status ?? 'planned',
-    notes: shift?.notes ?? '',
-  })
-  const [error, setError] = useState('')
-  const mutation = useMutation({
-    mutationFn: (d: any) => shift ? api.put(`/schedules/shifts/${shift.id}`, d) : api.post('/schedules/shifts', d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['shifts'] }); onClose() },
-    onError: (e: any) => setError(e.response?.data?.detail || 'Ошибка'),
-  })
-
-  // Выбор графика → автоматически проставляем дату+время начала и конца смены
-  // (с учётом ночных смен, где конец приходится на следующий день).
-  const applySchedule = (schedId: string, date: string) => {
-    const sched = schedules?.find((s: any) => String(s.id) === String(schedId))
-    setForm((f) => {
-      const base: any = { ...f, schedule_id: schedId, shift_date: date }
-      if (sched?.work_start && sched?.work_end) {
-        const endDate = sched.work_end <= sched.work_start ? format(addDays(new Date(date), 1), 'yyyy-MM-dd') : date
-        base.start_time = `${date}T${sched.work_start}`
-        base.end_time = `${endDate}T${sched.work_end}`
-        if (sched.break_duration != null && (f.lunch_minutes === '' || f.lunch_minutes == null)) base.lunch_minutes = sched.break_duration
-      }
-      return base
-    })
-  }
-
-  // Выбор даты → дата автоматически проставляется в начало/конец смены.
-  const onDateChange = (date: string) => {
-    if (form.schedule_id) { applySchedule(form.schedule_id, date); return }
-    setForm((f) => {
-      const reDate = (dt: string) => (dt ? `${date}T${dt.slice(11, 16)}` : dt)
-      return { ...f, shift_date: date, start_time: reDate(f.start_time), end_time: reDate(f.end_time) }
-    })
-  }
-
-  return (
-    <form onSubmit={(e) => { e.preventDefault(); mutation.mutate({ ...form, employee_id: +form.employee_id, schedule_id: form.schedule_id || null, lunch_minutes: form.lunch_minutes === '' ? null : +form.lunch_minutes }) }} className="space-y-4">
-      {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</div>}
-      <div><label className="label">Сотрудник *</label>
-        <select className="input" value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })} required>
-          <option value="">— выберите —</option>
-          {employees?.map((e: any) => <option key={e.id} value={e.id}>{e.full_name}</option>)}
-        </select>
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div><label className="label">Дата смены *</label><DatePicker value={form.shift_date} onChange={onDateChange} /></div>
-        <div><label className="label">График</label>
-          <select className="input" value={form.schedule_id} onChange={(e) => applySchedule(e.target.value, form.shift_date)}>
-            <option value="">— без шаблона —</option>
-            {schedules?.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </div>
-        <div><label className="label">Начало смены</label><input type="datetime-local" className="input" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} /></div>
-        <div><label className="label">Конец смены</label><input type="datetime-local" className="input" value={form.end_time} onChange={(e) => setForm({ ...form, end_time: e.target.value })} /></div>
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div><label className="label">Обед (мин) <span className="text-slate-400 font-normal">— пусто = без обеда</span></label>
-          <input type="number" min={0} max={180} step={5} className="input" placeholder="0" value={form.lunch_minutes}
-            onChange={(e) => setForm({ ...form, lunch_minutes: e.target.value })} /></div>
-        <div><label className="label">Статус</label>
-          <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-            {Object.entries(SHIFT_STATUSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        </div>
-      </div>
-      <div><label className="label">Примечание</label><textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
-      <div className="flex justify-end gap-2 pt-2">
-        <button type="button" onClick={onClose} className="btn-secondary">Отмена</button>
-        <button type="submit" className="btn-primary" disabled={mutation.isPending}><Save size={14} /> Сохранить</button>
-      </div>
-    </form>
-  )
-}
-
 // ─── Модальное окно подтверждения / указания факт. часов ────────────────────
 function ConfirmModal({ shift, onClose }: { shift: Shift; onClose: () => void }) {
   const qc = useQueryClient()
-  const [form, setForm] = useState({
-    actual_start_time: shift.actual_start_time || shift.start_time?.slice(0, 16) || '',
-    actual_end_time: shift.actual_end_time || shift.end_time?.slice(0, 16) || '',
-    actual_hours_worked: shift.actual_hours_worked || '',
-  })
+  // Конец факт. смены в 00:00 следующих суток показываем как 24:00.
+  const endToField = (iso?: string | null) => {
+    if (!iso) return ''
+    const t = iso.slice(11, 16)
+    return (t === '00:00' && iso.slice(0, 10) > shift.shift_date) ? '24:00' : t
+  }
+  const [actualDate, setActualDate] = useState(shift.shift_date)
+  const [start, setStart] = useState(endToFieldStart(shift))
+  const [end, setEnd] = useState(endToField(shift.actual_end_time || shift.end_time))
+  const [hoursWorked, setHoursWorked] = useState(shift.actual_hours_worked || '')
   const [mode, setMode] = useState<'full' | 'custom'>('full')
 
   const mutation = useMutation({
     mutationFn: (body: any) => api.post(`/schedules/shifts/${shift.id}/confirm`, body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['shifts'] }); onClose() },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['shifts'] })
+      qc.invalidateQueries({ queryKey: ['assign-shifts'] })
+      onClose()
+    },
   })
 
   const handleFull = () => {
-    mutation.mutate({
-      actual_start_time: shift.start_time,
-      actual_end_time: shift.end_time,
-      actual_hours_worked: null,
-    })
+    mutation.mutate({ actual_start_time: shift.start_time, actual_end_time: shift.end_time, actual_hours_worked: null })
+  }
+
+  const handleCustom = () => {
+    const startIso = start ? `${actualDate}T${start}` : null
+    let endIso: string | null = null
+    if (end) {
+      let endTime = end, endDate = actualDate
+      if (end === '24:00') { endTime = '00:00'; endDate = format(addDays(new Date(actualDate), 1), 'yyyy-MM-dd') }
+      else if (end <= start) { endDate = format(addDays(new Date(actualDate), 1), 'yyyy-MM-dd') }
+      endIso = `${endDate}T${endTime}`
+    }
+    mutation.mutate({ actual_start_time: startIso, actual_end_time: endIso, actual_hours_worked: hoursWorked || null })
   }
 
   return (
     <div className="space-y-4">
       <div className="bg-slate-50 rounded-lg p-3 text-sm">
         <p className="font-medium text-slate-800">{shift.employee_name}</p>
-        <p className="text-slate-500 mt-0.5">{shift.shift_date} · план: {shift.start_time?.slice(11,16) || '?'}–{shift.end_time?.slice(11,16) || '?'} · {plannedHours(shift)}</p>
+        <p className="text-slate-500 mt-0.5">{dispD(shift.shift_date)} · план: {shift.start_time?.slice(11,16) || '?'}–{shift.end_time?.slice(11,16) || '?'} · {plannedHours(shift)}</p>
         {(shift as any).actual_hours_worked && (
           <p className="text-blue-600 mt-0.5">Данные Naumen: {(shift as any).actual_hours_worked} ч</p>
         )}
@@ -443,13 +589,14 @@ function ConfirmModal({ shift, onClose }: { shift: Shift; onClose: () => void })
 
       {mode === 'custom' && (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="label">Факт. начало</label><input type="datetime-local" className="input" value={form.actual_start_time} onChange={(e) => setForm({ ...form, actual_start_time: e.target.value })} /></div>
-            <div><label className="label">Факт. конец</label><input type="datetime-local" className="input" value={form.actual_end_time} onChange={(e) => setForm({ ...form, actual_end_time: e.target.value })} /></div>
+          <div><label className="label">Дата</label><DatePicker value={actualDate} onChange={setActualDate} className="w-44" /></div>
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="label">Факт. начало</label><TimeSelect value={start} onChange={setStart} /></div>
+            <div><label className="label">Факт. конец <span className="text-slate-400 font-normal">(24:00 = полночь)</span></label><TimeSelect value={end} onChange={setEnd} /></div>
           </div>
-          <div><label className="label">Отработано часов (если известно)</label>
-            <input type="number" step="0.5" min="0" max="24" className="input w-32" placeholder="напр. 7.5" value={form.actual_hours_worked}
-              onChange={(e) => setForm({ ...form, actual_hours_worked: e.target.value })} />
+          <div><label className="label">Отработано часов <span className="text-slate-400 font-normal">(если известно)</span></label>
+            <input type="number" step="0.5" min="0" max="24" className="input w-32" placeholder="напр. 7.5" value={hoursWorked}
+              onChange={(e) => setHoursWorked(e.target.value)} />
           </div>
         </div>
       )}
@@ -457,15 +604,20 @@ function ConfirmModal({ shift, onClose }: { shift: Shift; onClose: () => void })
       <div className="flex justify-end gap-2 pt-1">
         <button onClick={onClose} className="btn-secondary">Отмена</button>
         <button
-          onClick={() => mode === 'full' ? handleFull() : mutation.mutate(form)}
+          onClick={() => mode === 'full' ? handleFull() : handleCustom()}
           disabled={mutation.isPending}
           className="btn-primary"
         >
-          <CheckCircle size={14} /> Подтвердить
+          <Check size={15} strokeWidth={2.5} /> Подтвердить
         </button>
       </div>
     </div>
   )
+}
+
+// Факт. начало смены в поле HH:MM (из факт. или планового времени).
+function endToFieldStart(shift: Shift): string {
+  return (shift.actual_start_time || shift.start_time)?.slice(11, 16) || ''
 }
 
 // ─── Главная страница смен ──────────────────────────────────────────────────
@@ -478,7 +630,25 @@ export default function ShiftsPage() {
   const [confirmShift, setConfirmShift] = useState<Shift | null>(null)
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
   const [dateTo, setDateTo] = useState(format(addDays(new Date(), 30), 'yyyy-MM-dd'))
+  // Период выгрузки Excel — выбирается отдельно (по умолчанию текущий месяц),
+  // чтобы не грузить весь большой диапазон страницы.
+  const [showExport, setShowExport] = useState(false)
+  const [exportFrom, setExportFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'))
+  const [exportTo, setExportTo] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'))
   const qc = useQueryClient()
+
+  const downloadExcel = async (from: string, to: string) => {
+    const res = await api.get('/schedules/shifts/export.xlsx', {
+      params: { project_uuid: activeProject?.customer_uuid, date_from: from, date_to: to },
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(res.data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `График_${from}_${to}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['shifts', dateFrom, dateTo],
@@ -561,7 +731,7 @@ export default function ShiftsPage() {
     { id: 'past', label: 'Прошедшие', count: (data || []).filter((s) => s.shift_date < today).length },
     { id: 'active', label: 'Активные', count: (data || []).filter((s) => s.shift_date === today).length },
     { id: 'planned', label: 'Запланированные', count: (data || []).filter((s) => s.shift_date > today).length },
-    { id: 'assign', label: 'Проставить смены' },
+    { id: 'assign', label: 'Поставить смены' },
   ]
 
   return (
@@ -577,21 +747,7 @@ export default function ShiftsPage() {
                 {needsReview} требует проверки
               </div>
             )}
-            <button
-              onClick={async () => {
-                const res = await api.get('/schedules/shifts/export.xlsx', {
-                  params: { project_uuid: activeProject?.customer_uuid, date_from: dateFrom, date_to: dateTo },
-                  responseType: 'blob',
-                })
-                const url = URL.createObjectURL(res.data as Blob)
-                const a = document.createElement('a')
-                a.href = url
-                a.download = `График_${dateFrom}_${dateTo}.xlsx`
-                a.click()
-                URL.revokeObjectURL(url)
-              }}
-              className="btn-secondary"
-            ><Download size={14} /> Excel</button>
+            <button onClick={() => setShowExport(true)} className="btn-secondary"><Download size={14} /> Excel</button>
             <button onClick={() => reconcileMutation.mutate()} disabled={reconcileMutation.isPending} className="btn-secondary" title="Сверить вчерашние смены с Naumen">
               <RefreshCw size={14} className={reconcileMutation.isPending ? 'animate-spin' : ''} /> Сверить
             </button>
@@ -698,7 +854,7 @@ export default function ShiftsPage() {
                         <div className="flex gap-1 justify-end">
                           {view === 'past' && (
                             <button onClick={() => setConfirmShift(sh)} className="p-1.5 hover:bg-green-50 rounded text-slate-400 hover:text-green-600" title="Подтвердить / указать часы">
-                              <CheckCircle size={13} />
+                              <Check size={14} strokeWidth={2.5} />
                             </button>
                           )}
                           <button onClick={() => setEditShift(sh)} className="p-1.5 hover:bg-blue-50 rounded text-slate-400 hover:text-blue-600"><Pencil size={12} /></button>
@@ -853,9 +1009,37 @@ export default function ShiftsPage() {
         </>
       )}
 
-      {showForm && <Modal open title="Назначить смену" onClose={() => setShowForm(false)}><ShiftForm onClose={() => setShowForm(false)} /></Modal>}
-      {editShift && <Modal open title="Редактировать смену" onClose={() => setEditShift(null)}><ShiftForm shift={editShift} onClose={() => setEditShift(null)} /></Modal>}
+      {showForm && <Modal open size="xl" title="Назначить смену" onClose={() => setShowForm(false)}>
+        <ShiftAssignModal projectUuid={activeProject?.customer_uuid} onClose={() => setShowForm(false)} /></Modal>}
+      {editShift && <Modal open size="xl" title="Смена сотрудника" onClose={() => setEditShift(null)}>
+        <ShiftAssignModal employee={{ id: editShift.employee_id, full_name: editShift.employee_name || `#${editShift.employee_id}` }}
+          projectUuid={activeProject?.customer_uuid} initialDate={editShift.shift_date} onClose={() => setEditShift(null)} /></Modal>}
       {confirmShift && <Modal open title="Подтверждение смены" onClose={() => setConfirmShift(null)}><ConfirmModal shift={confirmShift} onClose={() => setConfirmShift(null)} /></Modal>}
+
+      {showExport && (
+        <Modal open title="Выгрузка графика в Excel" onClose={() => setShowExport(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-500">Выберите период, за который выгрузить фактические смены — чтобы не грузить весь большой диапазон.</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div><label className="label">С</label><DatePicker value={exportFrom} onChange={setExportFrom} /></div>
+              <div><label className="label">По</label><DatePicker value={exportTo} onChange={setExportTo} /></div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {([['Текущий месяц', startOfMonth(new Date()), endOfMonth(new Date())],
+                 ['Прошлый месяц', startOfMonth(subDays(startOfMonth(new Date()), 1)), endOfMonth(subDays(startOfMonth(new Date()), 1))],
+                 ['Последние 7 дней', subDays(new Date(), 6), new Date()],
+                ] as [string, Date, Date][]).map(([lbl, f, t]) => (
+                <button key={lbl} type="button" onClick={() => { setExportFrom(format(f, 'yyyy-MM-dd')); setExportTo(format(t, 'yyyy-MM-dd')) }}
+                  className="text-xs px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 hover:border-brand-300 hover:bg-brand-50">{lbl}</button>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button onClick={() => setShowExport(false)} className="btn-secondary">Отмена</button>
+              <button onClick={async () => { await downloadExcel(exportFrom, exportTo); setShowExport(false) }} className="btn-primary"><Download size={14} /> Скачать Excel</button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

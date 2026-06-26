@@ -8,8 +8,10 @@ import {
   PhoneCall, Clock, UsersIcon, Radio, FolderOpen, Tag,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
+import { useProjectStore } from '@/store/project'
 import type { UserRole } from '@/types'
 import { ROLE_ALLOWED_SECTIONS } from '@/types'
+import { PhoneIncoming, PhoneOutgoing } from 'lucide-react'
 
 interface NavItem {
   label: string
@@ -19,32 +21,51 @@ interface NavItem {
   children?: (NavItem & { to: string })[]
 }
 
-const nav: NavItem[] = [
-  { label: 'Сводка', icon: <LayoutDashboard size={18} />, to: '/dashboard', section: 'dashboard' },
-  { label: 'Мониторинг', icon: <Radio size={18} />, to: '/analytics/live', section: 'dashboard' },
-  {
-    label: 'Команда',
-    icon: <Users size={18} />,
-    section: 'team',
-    children: [
-      { label: 'Сотрудники', icon: <UserCheck size={16} />, to: '/team/employees', section: 'team' },
-      { label: 'Команды',    icon: <UsersRound size={16} />, to: '/team/teams', section: 'team' },
-      { label: 'Навыки',     icon: <Star size={16} />,      to: '/team/skills', section: 'team' },
-    ],
-  },
-  {
-    label: 'Аналитика',
-    icon: <BarChart3 size={18} />,
-    section: 'analytics',
-    children: [
-      { label: 'Очереди',           icon: <PhoneCall size={16} />,    to: '/analytics/queues', section: 'analytics' },
-      { label: 'Нагрузка',          icon: <TrendingUp size={16} />,   to: '/analytics/workload', section: 'analytics' },
-      { label: 'Нагр. операторов',  icon: <UserCheck size={16} />,    to: '/analytics/operator-load', section: 'analytics' },
-      { label: 'Внутридневная',     icon: <Clock size={16} />,         to: '/analytics/intraday', section: 'analytics' },
-      { label: 'Потребность',       icon: <UsersIcon size={16} />,     to: '/analytics/staffing', section: 'analytics' },
-    ],
-  },
-  {
+// Разделы аналитики зависят от линий проекта (вход/исход): «Аналитика (Вход)»
+// показывается, если у проекта есть входящая линия; «Аналитика (Исход)» — если
+// исходящая. По умолчанию (нет данных) показываем вход.
+function buildNav(hasInbound: boolean, hasOutbound: boolean): NavItem[] {
+  const items: NavItem[] = [
+    { label: 'Сводка', icon: <LayoutDashboard size={18} />, to: '/dashboard', section: 'dashboard' },
+    { label: 'Мониторинг', icon: <Radio size={18} />, to: '/analytics/live', section: 'dashboard' },
+    {
+      label: 'Команда',
+      icon: <Users size={18} />,
+      section: 'team',
+      children: [
+        { label: 'Сотрудники', icon: <UserCheck size={16} />, to: '/team/employees', section: 'team' },
+        { label: 'Команды',    icon: <UsersRound size={16} />, to: '/team/teams', section: 'team' },
+        { label: 'Навыки',     icon: <Star size={16} />,      to: '/team/skills', section: 'team' },
+      ],
+    },
+  ]
+  if (hasInbound) {
+    items.push({
+      label: 'Аналитика (Вход)',
+      icon: <PhoneIncoming size={18} />,
+      section: 'analytics',
+      children: [
+        { label: 'Очереди',           icon: <PhoneCall size={16} />,    to: '/analytics/queues', section: 'analytics' },
+        { label: 'Нагрузка',          icon: <TrendingUp size={16} />,   to: '/analytics/workload', section: 'analytics' },
+        { label: 'Нагр. операторов',  icon: <UserCheck size={16} />,    to: '/analytics/operator-load', section: 'analytics' },
+        { label: 'Внутридневная',     icon: <Clock size={16} />,         to: '/analytics/intraday', section: 'analytics' },
+        { label: 'Потребность',       icon: <UsersIcon size={16} />,     to: '/analytics/staffing', section: 'analytics' },
+      ],
+    })
+  }
+  if (hasOutbound) {
+    items.push({
+      label: 'Аналитика (Исход)',
+      icon: <PhoneOutgoing size={18} />,
+      section: 'analytics',
+      children: [
+        { label: 'Обзор',     icon: <BarChart3 size={16} />,    to: '/analytics/outbound', section: 'analytics' },
+        { label: 'Операторы', icon: <UserCheck size={16} />,    to: '/analytics/outbound/operators', section: 'analytics' },
+        { label: 'Нагрузка',  icon: <Clock size={16} />,        to: '/analytics/outbound/load', section: 'analytics' },
+      ],
+    })
+  }
+  items.push({
     label: 'Рабочее время',
     icon: <Clock4 size={18} />,
     section: 'worktime',
@@ -53,8 +74,9 @@ const nav: NavItem[] = [
       { label: 'Отсутствия', icon: <CalendarOff size={16} />, to: '/worktime/absences', section: 'worktime' },
       { label: 'Смены',      icon: <Clock4 size={16} />,      to: '/worktime/shifts', section: 'worktime' },
     ],
-  },
-]
+  })
+  return items
+}
 
 const bottom: NavItem[] = [
   { label: 'Отчёты',        icon: <FileBarChart2 size={18} />, to: '/reports', section: 'reports' },
@@ -142,7 +164,12 @@ function NavSection({ item, role }: { item: NavItem; role: UserRole | undefined 
 
 export default function Sidebar() {
   const { user } = useAuthStore()
+  const { activeProject } = useProjectStore()
   const role = (user?.role ?? 'viewer') as UserRole
+  // Линии активного проекта определяют, какие разделы аналитики видны.
+  const hasInbound = activeProject?.has_inbound ?? true
+  const hasOutbound = activeProject?.has_outbound ?? false
+  const nav = buildNav(hasInbound, hasOutbound)
 
   return (
     <aside className="flex flex-col w-60 min-h-screen bg-sidebar-bg border-r border-white/5">

@@ -40,7 +40,43 @@ def _execute(query: str, params: dict = None, overrides: dict = None, timeout_ms
             # это int из кода (не пользовательский ввод), поэтому форматируем напрямую.
             cur.execute(f"SET statement_timeout = {int(timeout_ms)}")
             cur.execute(query, params or {})
-            return [dict(row) for row in cur.fetchall()]
+            rows = [dict(row) for row in cur.fetchall()]
+        # Явно завершаем транзакцию: psycopg2 по умолчанию autocommit=False, и без
+        # commit/rollback соединение возвращается в PgBouncer «idle in transaction»,
+        # удерживая серверный слот — при опросе/нескольких вкладках это исчерпывает
+        # пул PgBouncer, и Naumen становится «недоступен» вообще (даже для теста).
+        conn.commit()
+        return rows
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def _execute_multi(queries: list, overrides: dict = None, timeout_ms: int = 20000) -> list:
+    """Выполняет несколько SELECT'ов на ОДНОМ соединении (список (query, params)).
+    Сокращает число открытий соединений к Naumen для много-запросных отчётов
+    (исходящая сводка/статистика) — меньше нагрузки на PgBouncer."""
+    conn = _get_conn(overrides)
+    try:
+        out = []
+        with conn.cursor() as cur:
+            cur.execute(f"SET statement_timeout = {int(timeout_ms)}")
+            for q, params in queries:
+                cur.execute(q, params or {})
+                out.append([dict(row) for row in cur.fetchall()])
+        conn.commit()
+        return out
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 
@@ -911,6 +947,38 @@ def get_current_operators_for_project(partner_uuid: str, overrides: dict = None,
     return _execute(query, {"partner_uuid": partner_uuid, "work": work, "offline": offline}, overrides)
 
 
+def get_operator_queues_map(partner_uuid: str, days: int = 7, overrides: dict = None) -> dict:
+    """Для каждого оператора проекта — очереди, в которых он недавно (за `days`
+    суток) обрабатывал звонки, упорядоченные по числу звонков (наиболее
+    «своя» очередь — первой). Используется в Мониторинге, чтобы рядом с ФИО
+    показать очередь(и), в которых оператор стоит / на паузе / с которой вышел.
+    Явной привязки «оператор ⇄ очередь» в схеме нет — принадлежность очереди
+    выводим из фактически обработанных звонков (тот же принцип, что и членство
+    в проекте)."""
+    query = """
+    SELECT
+        COALESCE(cl.dst_id, cl.dst_abonent) AS login,
+        icp.title                           AS queue_name,
+        COUNT(*)                            AS cnt
+    FROM queued_calls_ms que
+    JOIN mv_incoming_call_project icp ON icp.uuid = que.project_id
+    LEFT JOIN call_legs cl ON cl.session_id = que.session_id
+                           AND cl.leg_id = que.next_leg_id
+    WHERE icp.partneruuid = %(p)s
+      AND icp.removed = false
+      AND que.final_stage = 'operator'
+      AND que.enqueued_time >= NOW() - make_interval(days => %(d)s)
+      AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
+    GROUP BY COALESCE(cl.dst_id, cl.dst_abonent), icp.title
+    ORDER BY login, cnt DESC
+    """
+    rows = _execute(query, {"p": partner_uuid, "d": days}, overrides)
+    result: dict = {}
+    for r in rows:
+        result.setdefault(r["login"], []).append(r["queue_name"])
+    return result
+
+
 def get_current_online_operators(logins: list, overrides: dict = None) -> list[dict]:
     """Latest operator status, filtered by login list and last 48 h."""
     if not logins:
@@ -939,6 +1007,267 @@ def get_operator_day_seconds(login: str, work_date: str, overrides: dict = None)
     """
     result = _execute(query, {"login": login, "work_date": work_date}, overrides)
     return float(result[0]["total_sec"]) if result else 0.0
+
+
+def get_operator_outbound_projects_map(partner_uuid: str, days: int = 7, overrides: dict = None) -> dict:
+    """Для каждого оператора — исходящие проекты (линии), по которым он недавно
+    (за `days` суток) делал попытки. Аналог get_operator_queues_map, но для
+    исходящих (источник — detail_outbound_sessions_ms)."""
+    query = """
+    SELECT d.login AS login, ocp.title AS queue_name, COUNT(*) AS cnt
+    FROM detail_outbound_sessions_ms d
+    JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
+    WHERE ocp.partneruuid = %(p)s
+      AND d.attempt_start >= NOW() - make_interval(days => %(d)s)
+      AND d.login IS NOT NULL
+    GROUP BY d.login, ocp.title
+    ORDER BY login, cnt DESC
+    """
+    rows = _execute(query, {"p": partner_uuid, "d": days}, overrides)
+    result: dict = {}
+    for r in rows:
+        result.setdefault(r["login"], []).append(r["queue_name"])
+    return result
+
+
+def get_current_operators_outbound(partner_uuid: str, overrides: dict = None,
+                                   work_statuses: list = None, offline_statuses: list = None) -> list[dict]:
+    """Текущие статусы операторов ИСХОДЯЩИХ линий проекта (в линии / на паузе /
+    вышел). Состав операторов — логины из detail_outbound_sessions_ms за 7 дней
+    (исходящие проекты партнёра). Статус — как в get_current_operators_for_project:
+    `entered` = начало текущего непрерывного отрезка той же классификации."""
+    from app.services.status_classification import STANDARD_WORK, STANDARD_OFFLINE
+    work = work_statuses if work_statuses is not None else list(STANDARD_WORK)
+    offline = offline_statuses if offline_statuses is not None else list(STANDARD_OFFLINE)
+    query = """
+    WITH op_logins AS (
+        SELECT DISTINCT d.login AS login
+        FROM detail_outbound_sessions_ms d
+        JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
+        WHERE ocp.partneruuid = %(partner_uuid)s
+          AND d.attempt_start >= NOW() - INTERVAL '7 days'
+          AND d.login IS NOT NULL
+    ),
+    ev AS (
+        SELECT
+            sc.login, sc.status, sc.entered,
+            CASE WHEN lower(sc.status) = ANY(%(work)s)    THEN 'work'
+                 WHEN lower(sc.status) = ANY(%(offline)s) THEN 'offline'
+                 ELSE 'pause' END AS grp
+        FROM status_changes sc
+        JOIN op_logins ol ON ol.login = sc.login
+        WHERE sc.entered >= NOW() - INTERVAL '48 hours'
+    ),
+    marked AS (
+        SELECT login, status, entered, grp,
+               LAG(grp) OVER (PARTITION BY login ORDER BY entered) AS prev_grp
+        FROM ev
+    ),
+    islands AS (
+        SELECT login, status, entered, grp,
+               SUM(CASE WHEN grp IS DISTINCT FROM prev_grp THEN 1 ELSE 0 END)
+                   OVER (PARTITION BY login ORDER BY entered) AS island
+        FROM marked
+    ),
+    runs AS (
+        SELECT login, grp, island,
+               MIN(entered) AS run_started,
+               MAX(entered) AS last_entered,
+               (ARRAY_AGG(status ORDER BY entered DESC))[1] AS last_status
+        FROM islands
+        GROUP BY login, grp, island
+    ),
+    latest AS (
+        SELECT DISTINCT ON (login)
+            login, last_status AS status, run_started AS entered
+        FROM runs
+        ORDER BY login, last_entered DESC
+    )
+    SELECT l.login AS login, l.status AS status, l.entered AS entered, em.title AS employee_name
+    FROM latest l
+    LEFT JOIN mv_employee em ON em.login = l.login
+    ORDER BY l.status, l.entered DESC
+    """
+    return _execute(query, {"partner_uuid": partner_uuid, "work": work, "offline": offline}, overrides)
+
+
+def get_recent_stats_outbound(partner_uuid: str, window_min: int, overrides: dict = None) -> dict:
+    """Live-статистика исходящего обзвона за последние window_min минут: по
+    операторам (попытки/контакты/ср.разговор) и по результату попыток. Контакт =
+    реальный разговор speaking_time > 10 c. Времена dosm — в МС."""
+    q_op = """
+    SELECT
+        d.login AS login,
+        em.title AS employee_name,
+        COUNT(*) AS attempts,
+        COUNT(*) FILTER (WHERE d.speaking_time > 10000) AS contacts,
+        ROUND(AVG(d.speaking_time / 1000.0) FILTER (WHERE d.speaking_time > 0)::numeric, 1) AS avg_talk_sec
+    FROM detail_outbound_sessions_ms d
+    JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
+    LEFT JOIN mv_employee em ON em.login = d.login
+    WHERE ocp.partneruuid = %(p)s
+      AND d.attempt_start >= NOW() - make_interval(mins => %(w)s)
+      AND d.login IS NOT NULL
+    GROUP BY d.login, em.title
+    ORDER BY attempts DESC
+    """
+    q_res = """
+    SELECT COALESCE(d.attempt_result, '—') AS result, COUNT(*) AS cnt,
+           COUNT(*) FILTER (WHERE d.speaking_time > 10000) AS contacts
+    FROM detail_outbound_sessions_ms d
+    JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
+    WHERE ocp.partneruuid = %(p)s
+      AND d.attempt_start >= NOW() - make_interval(mins => %(w)s)
+    GROUP BY d.attempt_result
+    ORDER BY cnt DESC
+    """
+    params = {"p": partner_uuid, "w": window_min}
+    res = _execute_multi([(q_op, params), (q_res, params)], overrides)
+    return {"by_operator": res[0], "by_result": res[1]}
+
+
+def get_outbound_projects(partner_uuid: str, overrides: dict = None) -> list[dict]:
+    """Список исходящих проектов (подпроектов/«очередей» обзвона) партнёра."""
+    query = """
+    SELECT uuid AS project_uuid, title AS name, datachannel AS channel, state AS status
+    FROM mv_outcoming_call_project
+    WHERE partneruuid = %(p)s AND removed = false
+    ORDER BY title
+    """
+    return _execute(query, {"p": partner_uuid}, overrides)
+
+
+def get_outbound_summary(partner_uuid: str, begin_date: str, end_date: str,
+                         project_ids: list = None, overrides: dict = None) -> dict:
+    """Сводка исходящего обзвона за период (костяк — detail_outbound_sessions_ms,
+    проект — через mv_outcoming_call_project.partneruuid). Канон (WFM_instruction_pack):
+    - времена dosm — в МС (÷1000 → сек);
+    - контакт = реальный разговор speaking_time > 10 c;
+    - бизнес-результат — по ПОСЛЕДНЕЙ попытке кейса (1 кейс = 1 итог).
+    project_ids — фильтр по конкретным исходящим подпроектам (если задан)."""
+    flt = "AND d.project_id = ANY(%(pids)s)" if project_ids else ""
+    base = f"""
+        FROM detail_outbound_sessions_ms d
+        JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
+        WHERE ocp.partneruuid = %(p)s
+          AND d.attempt_start >= %(begin)s::timestamp
+          AND d.attempt_start <  %(end)s::timestamp
+          {flt}
+    """
+    q_totals = f"""
+    SELECT
+        COUNT(*)                                            AS attempts,
+        COUNT(DISTINCT d.case_uuid)                         AS cases,
+        COUNT(*) FILTER (WHERE d.speaking_time > 10000)     AS contacts,
+        ROUND(100.0 * COUNT(*) FILTER (WHERE d.speaking_time > 10000)
+              / NULLIF(COUNT(*), 0), 1)                     AS contact_rate,
+        ROUND(AVG(d.speaking_time / 1000.0) FILTER (WHERE d.speaking_time > 0)::numeric, 1) AS avg_talk_sec,
+        ROUND(COUNT(*)::numeric / NULLIF(COUNT(DISTINCT d.case_uuid), 0), 2) AS attempts_per_case
+    {base}
+    """
+    q_by_result = f"""
+    WITH last_att AS (
+        SELECT DISTINCT ON (d.case_uuid) d.case_uuid, d.attempt_result
+        FROM detail_outbound_sessions_ms d
+        JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
+        WHERE ocp.partneruuid = %(p)s
+          AND d.attempt_start >= %(begin)s::timestamp
+          AND d.attempt_start <  %(end)s::timestamp
+          AND d.case_uuid IS NOT NULL
+          {flt}
+        ORDER BY d.case_uuid, d.attempt_start DESC
+    )
+    SELECT COALESCE(attempt_result, '—') AS result, COUNT(*) AS cnt
+    FROM last_att GROUP BY attempt_result ORDER BY cnt DESC
+    """
+    q_by_day = f"""
+    SELECT DATE(d.attempt_start)                            AS day,
+           COUNT(*)                                         AS attempts,
+           COUNT(*) FILTER (WHERE d.speaking_time > 10000)  AS contacts
+    {base}
+    GROUP BY DATE(d.attempt_start)
+    ORDER BY day
+    """
+    q_by_project = f"""
+    SELECT ocp.title                                        AS name,
+           d.project_id                                     AS project_uuid,
+           COUNT(*)                                         AS attempts,
+           COUNT(DISTINCT d.case_uuid)                      AS cases,
+           COUNT(*) FILTER (WHERE d.speaking_time > 10000)  AS contacts,
+           ROUND(100.0 * COUNT(*) FILTER (WHERE d.speaking_time > 10000)
+                 / NULLIF(COUNT(*), 0), 1)                  AS contact_rate
+    {base}
+    GROUP BY ocp.title, d.project_id
+    ORDER BY attempts DESC
+    """
+    params = {"p": partner_uuid, "begin": begin_date, "end": end_date}
+    if project_ids:
+        params["pids"] = project_ids
+    totals, by_result, by_day, by_project = _execute_multi(
+        [(q_totals, params), (q_by_result, params), (q_by_day, params), (q_by_project, params)], overrides,
+    )
+    return {
+        "totals": totals[0] if totals else {},
+        "by_result": by_result,
+        "by_day": [{"day": str(r["day"]), "attempts": r["attempts"], "contacts": r["contacts"]} for r in by_day],
+        "by_project": by_project,
+    }
+
+
+def get_outbound_operator_load(partner_uuid: str, begin_date: str, end_date: str,
+                               project_ids: list = None, overrides: dict = None) -> list[dict]:
+    """Нагрузка операторов на обзвоне за период: попытки, контакты, contact rate,
+    ср. разговор, кейсы, попыток на кейс. project_ids — фильтр по подпроектам."""
+    flt = "AND d.project_id = ANY(%(pids)s)" if project_ids else ""
+    query = f"""
+    SELECT
+        d.login AS login,
+        em.title AS employee_name,
+        COUNT(*) AS attempts,
+        COUNT(*) FILTER (WHERE d.speaking_time > 10000) AS contacts,
+        ROUND(100.0 * COUNT(*) FILTER (WHERE d.speaking_time > 10000) / NULLIF(COUNT(*), 0), 1) AS contact_rate,
+        ROUND(AVG(d.speaking_time / 1000.0) FILTER (WHERE d.speaking_time > 0)::numeric, 1) AS avg_talk_sec,
+        COUNT(DISTINCT d.case_uuid) AS cases,
+        ROUND(COUNT(*)::numeric / NULLIF(COUNT(DISTINCT d.case_uuid), 0), 2) AS attempts_per_case
+    FROM detail_outbound_sessions_ms d
+    JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
+    LEFT JOIN mv_employee em ON em.login = d.login
+    WHERE ocp.partneruuid = %(p)s
+      AND d.attempt_start >= %(begin)s::timestamp
+      AND d.attempt_start <  %(end)s::timestamp
+      AND d.login IS NOT NULL
+      {flt}
+    GROUP BY d.login, em.title
+    ORDER BY attempts DESC
+    """
+    params = {"p": partner_uuid, "begin": begin_date, "end": end_date}
+    if project_ids:
+        params["pids"] = project_ids
+    return _execute(query, params, overrides)
+
+
+def get_outbound_load_by_hour(partner_uuid: str, begin_date: str, end_date: str,
+                              project_ids: list = None, overrides: dict = None) -> list[dict]:
+    """Нагрузка обзвона по часам суток за период (когда звонят): попытки и контакты.
+    project_ids — фильтр по подпроектам."""
+    flt = "AND d.project_id = ANY(%(pids)s)" if project_ids else ""
+    query = f"""
+    SELECT EXTRACT(HOUR FROM d.attempt_start)::int          AS hour_num,
+           COUNT(*)                                         AS attempts,
+           COUNT(*) FILTER (WHERE d.speaking_time > 10000)  AS contacts
+    FROM detail_outbound_sessions_ms d
+    JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
+    WHERE ocp.partneruuid = %(p)s
+      AND d.attempt_start >= %(begin)s::timestamp
+      AND d.attempt_start <  %(end)s::timestamp
+      {flt}
+    GROUP BY hour_num
+    ORDER BY hour_num
+    """
+    params = {"p": partner_uuid, "begin": begin_date, "end": end_date}
+    if project_ids:
+        params["pids"] = project_ids
+    return _execute(query, params, overrides)
 
 
 def test_connection(overrides: dict = None) -> dict:

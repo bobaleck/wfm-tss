@@ -30,13 +30,15 @@ export const useProjectStore = create<ProjectState>()(
         try {
           const res = await api.get('/integrations/tracked-projects')
           const projects: Project[] = res.data || []
-          set((state) => ({
-            projects,
-            activeProject:
-              state.activeProject && projects.some((p) => p.customer_uuid === state.activeProject!.customer_uuid)
-                ? state.activeProject
-                : projects[0] || null,
-          }))
+          set((state) => {
+            // ВАЖНО: заменяем активный проект СВЕЖЕЙ версией из списка, а не
+            // оставляем старый объект — иначе обновлённые поля (линии has_inbound/
+            // has_outbound, target_sl и т.п.) не подхватятся, и разделы аналитики
+            // не появятся/не скроются после изменения настроек проекта.
+            const cur = state.activeProject
+            const fresh = cur ? projects.find((p) => p.customer_uuid === cur.customer_uuid) : undefined
+            return { projects, activeProject: fresh ?? projects[0] ?? null }
+          })
         } catch (_) {}
       },
     }),

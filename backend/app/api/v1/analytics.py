@@ -12,6 +12,55 @@ import app.services.naumen_db as naumen
 
 router = APIRouter()
 
+# Кэш карты «оператор → очереди» (по обработанным звонкам за неделю). Мониторинг
+# опрашивает current-operators каждые 5 секунд, а очереди оператора меняются
+# медленно — поэтому держим результат до 5 минут, чтобы не сканировать Naumen
+# на каждый опрос. Ключ — partner_uuid; значение — (timestamp, map).
+import time as _time_mod
+_QUEUES_MAP_TTL = 300
+_queues_map_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _operator_queues_cached(partner_uuid: str, overrides: Optional[dict]) -> dict:
+    now = _time_mod.time()
+    hit = _queues_map_cache.get(partner_uuid)
+    if hit and now - hit[0] < _QUEUES_MAP_TTL:
+        return hit[1]
+    data = naumen.get_operator_queues_map(partner_uuid, 7, overrides)
+    _queues_map_cache[partner_uuid] = (now, data)
+    return data
+
+
+# Аналогичный кэш для карты «оператор → исходящие проекты (линии)».
+_outbound_projects_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _operator_outbound_projects_cached(partner_uuid: str, overrides: Optional[dict]) -> dict:
+    now = _time_mod.time()
+    hit = _outbound_projects_cache.get(partner_uuid)
+    if hit and now - hit[0] < _QUEUES_MAP_TTL:
+        return hit[1]
+    data = naumen.get_operator_outbound_projects_map(partner_uuid, 7, overrides)
+    _outbound_projects_cache[partner_uuid] = (now, data)
+    return data
+
+
+# Кэш СПИСКА исходящих подпроектов (мало меняется, а запрашивается со многих
+# страниц — дашборд/мониторинг/смены/настройки). Кэшируем naumen-часть, чтобы не
+# открывать соединение к Naumen на каждый запрос; флаги Вход/Исход/Скрыть из
+# нашей БД применяем поверх кэша на каждый вызов.
+_outbound_list_cache: dict[str, tuple[float, list]] = {}
+
+
+def _outbound_projects_list_cached(partner_uuid: str, overrides: Optional[dict]) -> list:
+    now = _time_mod.time()
+    hit = _outbound_list_cache.get(partner_uuid)
+    if hit and now - hit[0] < _QUEUES_MAP_TTL:
+        return [dict(p) for p in hit[1]]   # копия, чтобы не мутировать кэш флагами
+    data = naumen.get_outbound_projects(partner_uuid, overrides)
+    _outbound_list_cache[partner_uuid] = (now, data)
+    return [dict(p) for p in data]
+
 
 def _exclusive_end(end: date) -> str:
     """Фронтенд присылает диапазон ВКЛЮЧИТЕЛЬНО [begin, end] (для одного дня
@@ -54,13 +103,17 @@ def get_queues(partner_uuid: str, db: Session = Depends(get_db), current_user=De
     check_project_access(partner_uuid, current_user, db)
     try:
         queues = naumen.get_queues(partner_uuid, _build_overrides(db))
-        # Apply WFM overrides (target_sl, answer_sec) on top of Naumen values
+        # Apply WFM overrides (target_sl, answer_sec) + направление/видимость очереди.
         overrides = {
             r.queue_name: r
             for r in db.query(QueueSetting).filter(QueueSetting.partner_uuid == partner_uuid).all()
         }
         for q in queues:
             ov = overrides.get(q.get("name"))
+            # По умолчанию входящая очередь = «Вход», видима.
+            q["show_in"] = bool(ov.show_in) if ov and ov.show_in is not None else True
+            q["show_out"] = bool(ov.show_out) if ov and ov.show_out is not None else False
+            q["hidden"] = bool(ov.hidden) if ov and ov.hidden is not None else False
             if ov:
                 if ov.target_sl is not None:
                     q["target_sl"] = ov.target_sl
@@ -445,15 +498,159 @@ def get_current_operators(
     ).all()
     local_names = {e.naumen_login: e.full_name for e in employees}
     try:
+        overrides = _build_overrides(db)
         work_statuses, offline_statuses = _status_sets(db, partner_uuid)
         rows = naumen.get_current_operators_for_project(
-            partner_uuid, _build_overrides(db), work_statuses, offline_statuses,
+            partner_uuid, overrides, work_statuses, offline_statuses,
         )
+        # Очереди оператора (по обработанным звонкам за неделю) — для показа
+        # рядом с ФИО в Мониторинге и фильтрации по очередям. Кэшируется на 5 мин.
+        try:
+            queues_map = _operator_queues_cached(partner_uuid, overrides)
+        except Exception:
+            queues_map = {}
         for r in rows:
             local = local_names.get(r.get("login"))
             if local:
                 r["employee_name"] = local
+            r["queues"] = queues_map.get(r.get("login"), [])
         return {"data": rows, "total_logins": len(rows)}
+    except Exception as e:
+        raise HTTPException(503, detail=str(e))
+
+
+@router.get("/current-operators-outbound")
+def get_current_operators_outbound(
+    partner_uuid: str,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Текущий статус операторов ИСХОДЯЩИХ линий проекта (для Мониторинга, линия «Исход»)."""
+    employees = db.query(Employee).filter(
+        Employee.project_uuid == partner_uuid,
+        Employee.naumen_login.isnot(None),
+    ).all()
+    local_names = {e.naumen_login: e.full_name for e in employees}
+    try:
+        overrides = _build_overrides(db)
+        work_statuses, offline_statuses = _status_sets(db, partner_uuid)
+        rows = naumen.get_current_operators_outbound(
+            partner_uuid, overrides, work_statuses, offline_statuses,
+        )
+        try:
+            projects_map = _operator_outbound_projects_cached(partner_uuid, overrides)
+        except Exception:
+            projects_map = {}
+        for r in rows:
+            local = local_names.get(r.get("login"))
+            if local:
+                r["employee_name"] = local
+            r["queues"] = projects_map.get(r.get("login"), [])
+        return {"data": rows, "total_logins": len(rows)}
+    except Exception as e:
+        raise HTTPException(503, detail=str(e))
+
+
+@router.get("/recent-stats-outbound")
+def get_recent_stats_outbound_ep(
+    partner_uuid: str,
+    window_min: int = Query(1440, ge=1, le=1440),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Live-статистика исходящего обзвона за последние window_min минут: по
+    операторам и по результату попыток (Мониторинг → Статистика, линия «Исход»)."""
+    check_project_access(partner_uuid, current_user, db)
+    try:
+        return naumen.get_recent_stats_outbound(partner_uuid, int(window_min), _build_overrides(db))
+    except Exception as e:
+        raise HTTPException(503, detail=str(e))
+
+
+@router.get("/outbound-projects")
+def outbound_projects_ep(
+    partner_uuid: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Список исходящих подпроектов («очередей» обзвона) партнёра + флаг hidden
+    (скрытые в настройках — по queue_settings, ключ = uuid подпроекта)."""
+    check_project_access(partner_uuid, current_user, db)
+    try:
+        projects = _outbound_projects_list_cached(partner_uuid, _build_overrides(db))
+        # Настройки подпроектов храним в queue_settings с ключом "out:<uuid>"
+        # (направление Вход/Исход + видимость), чтобы не путать их со входящими.
+        settings = {
+            r.queue_name: r
+            for r in db.query(QueueSetting).filter(QueueSetting.partner_uuid == partner_uuid).all()
+        }
+        for p in projects:
+            ov = settings.get(f"out:{p.get('project_uuid')}")
+            # По умолчанию исходящий подпроект = «Исход», видим.
+            p["show_in"] = bool(ov.show_in) if ov and ov.show_in is not None else False
+            p["show_out"] = bool(ov.show_out) if ov and ov.show_out is not None else True
+            p["hidden"] = bool(ov.hidden) if ov and ov.hidden is not None else False
+        return {"data": projects}
+    except Exception as e:
+        raise HTTPException(503, detail=str(e))
+
+
+@router.get("/outbound-summary")
+def outbound_summary_ep(
+    partner_uuid: str,
+    begin: date = Query(...),
+    end: date = Query(...),
+    project_ids: Optional[list[str]] = Query(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Сводка исходящего обзвона за период (раздел «Аналитика (Исход)»):
+    попытки, кейсы, контакты, contact rate, ср. разговор, попыток на кейс,
+    распределение по результату, динамика по дням и разрез по подпроектам.
+    project_ids — фильтр по конкретным исходящим подпроектам."""
+    check_project_access(partner_uuid, current_user, db)
+    if end < begin:
+        raise HTTPException(400, detail="end не может быть раньше begin")
+    try:
+        return naumen.get_outbound_summary(partner_uuid, str(begin), _exclusive_end(end), project_ids or None, _build_overrides(db))
+    except Exception as e:
+        raise HTTPException(503, detail=str(e))
+
+
+@router.get("/outbound-operators")
+def outbound_operators_ep(
+    partner_uuid: str,
+    begin: date = Query(...),
+    end: date = Query(...),
+    project_ids: Optional[list[str]] = Query(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Нагрузка операторов на обзвоне за период (с фильтром по подпроектам)."""
+    check_project_access(partner_uuid, current_user, db)
+    if end < begin:
+        raise HTTPException(400, detail="end не может быть раньше begin")
+    try:
+        return {"data": naumen.get_outbound_operator_load(partner_uuid, str(begin), _exclusive_end(end), project_ids or None, _build_overrides(db))}
+    except Exception as e:
+        raise HTTPException(503, detail=str(e))
+
+
+@router.get("/outbound-load")
+def outbound_load_ep(
+    partner_uuid: str,
+    begin: date = Query(...),
+    end: date = Query(...),
+    project_ids: Optional[list[str]] = Query(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Нагрузка обзвона по часам суток за период (с фильтром по подпроектам)."""
+    check_project_access(partner_uuid, current_user, db)
+    if end < begin:
+        raise HTTPException(400, detail="end не может быть раньше begin")
+    try:
+        return {"data": naumen.get_outbound_load_by_hour(partner_uuid, str(begin), _exclusive_end(end), project_ids or None, _build_overrides(db))}
     except Exception as e:
         raise HTTPException(503, detail=str(e))
 

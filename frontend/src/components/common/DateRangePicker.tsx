@@ -7,9 +7,11 @@ interface Props {
   end: string
   onChange: (begin: string, end: string) => void
   className?: string
+  /** Сторона раскрытия панели: 'right' — если кнопка у правого края экрана. */
+  align?: 'left' | 'right'
 }
 
-type Mode = 'day' | '3days' | 'week' | 'month' | 'quarter' | 'year' | 'custom'
+type Mode = 'today' | 'day' | '3days' | 'week' | 'month' | 'quarter' | 'year' | 'custom'
 
 const fmt = (d: Date) => format(d, 'yyyy-MM-dd')
 const disp = (s: string) => {
@@ -29,6 +31,7 @@ function getMonthRange(month: number, year: number): [string, string] {
 }
 
 const QUICK: { label: string; mode: Mode }[] = [
+  { label: 'Сегодня', mode: 'today' },
   { label: 'Вчера', mode: 'day' },
   { label: '3 дня', mode: '3days' },
   { label: 'Неделя', mode: 'week' },
@@ -41,7 +44,7 @@ const DETAIL: { label: string; mode: Mode }[] = [
   { label: 'Другой', mode: 'custom' },
 ]
 
-export default function DateRangePicker({ begin, end, onChange, className }: Props) {
+export default function DateRangePicker({ begin, end, onChange, className, align = 'left' }: Props) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<Mode | null>(null)
   const [year, setYear] = useState(new Date().getFullYear())
@@ -67,7 +70,8 @@ export default function DateRangePicker({ begin, end, onChange, className }: Pro
 
   const handleQuick = (m: Mode) => {
     const now = new Date()
-    if (m === 'day') { const y = fmt(subDays(now, 1)); apply(y, y) }
+    if (m === 'today') apply(fmt(now), fmt(now))
+    else if (m === 'day') { const y = fmt(subDays(now, 1)); apply(y, y) }
     else if (m === '3days') apply(fmt(subDays(now, 2)), fmt(now))
     else if (m === 'week') apply(fmt(subDays(now, 6)), fmt(now))
   }
@@ -107,10 +111,9 @@ export default function DateRangePicker({ begin, end, onChange, className }: Pro
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden min-w-[300px]">
+        <div className={`absolute top-full ${align === 'right' ? 'right-0' : 'left-0'} mt-1 z-50 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden min-w-[300px]`}>
           {/* Top row: quick presets */}
-          <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-slate-100 bg-slate-50">
-            <span className="text-xs text-slate-400 mr-1">Быстро:</span>
+          <div className="flex items-center justify-center gap-1.5 px-3 py-2.5 border-b border-slate-100 bg-slate-50">
             {QUICK.map((p) => (
               <button
                 key={p.mode}

@@ -10,7 +10,7 @@ import api from '@/api/client'
 import { format, subDays } from 'date-fns'
 import {
   Users, PhoneCall, TrendingUp, CheckCircle2, AlertCircle, Clock, AlertTriangle,
-  UserCheck, Clock4, ArrowRight,
+  UserCheck, Clock4, ArrowRight, PhoneOutgoing, MessageSquare, Percent,
 } from 'lucide-react'
 import { slColor, slBarColor } from '@/utils/sl'
 import {
@@ -62,6 +62,22 @@ export default function DashboardPage() {
     enabled: !!activeProject,
   })
 
+  // ─── Исход (обзвон) — сводка за 7 дней, только если у проекта есть исх. линия ─
+  const hasOutbound = activeProject?.has_outbound ?? false
+  const outboundQuery = useQuery({
+    queryKey: ['dashboard-outbound', activeProject?.customer_uuid, begin, end],
+    queryFn: () =>
+      api.get('/analytics/outbound-summary', { params: { partner_uuid: activeProject!.customer_uuid, begin, end } })
+        .then((r) => r.data as { totals: any; by_day: { day: string; attempts: number; contacts: number }[] }),
+    enabled: !!activeProject && hasOutbound,
+    // Тяжёлый запрос (4 скана detail_outbound_sessions_ms) — не дёргаем при каждом
+    // фокусе вкладки; держим результат свежим 5 минут.
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  })
+  const outTotals = outboundQuery.data?.totals
+  const outByDay = (outboundQuery.data?.by_day || []).map((d) => ({ ...d, label: `${d.day.slice(8, 10)}.${d.day.slice(5, 7)}` }))
+
   // ─── Нагрузка ────────────────────────────────────────────────────────────
   const stats = workloadQuery.data || []
   const totalCalls = stats.reduce((s: number, r: any) => s + (r.total || 0), 0)
@@ -93,6 +109,17 @@ export default function DashboardPage() {
 
   // ─── Очереди ─────────────────────────────────────────────────────────────
   const queuesCount = queuesQuery.data?.length ?? null
+  // Количественный разрез по очередям за 7 дней — чтобы список очередей был
+  // не только про SL, но и со звонками (поступило/обработано/потеряно).
+  const queueCounts: Record<string, { total: number; handled: number; lost: number }> = {}
+  for (const row of stats) {
+    const qn = row.queue_name
+    if (!qn) continue
+    if (!queueCounts[qn]) queueCounts[qn] = { total: 0, handled: 0, lost: 0 }
+    queueCounts[qn].total += row.total || 0
+    queueCounts[qn].handled += row.handled || 0
+    queueCounts[qn].lost += row.lost || 0
+  }
 
   return (
     <div>
@@ -157,6 +184,40 @@ export default function DashboardPage() {
           color="green"
         />
       </div>
+
+      {/* Исход (обзвон) — показатели и мини-график, только при исходящей линии */}
+      {activeProject && hasOutbound && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+            <StatCard title="Попыток обзвона" value={outTotals ? Number(outTotals.attempts || 0).toLocaleString() : '—'} icon={<PhoneOutgoing size={20} />} color="blue" />
+            <StatCard title="Разговоров" value={outTotals ? Number(outTotals.contacts || 0).toLocaleString() : '—'} icon={<MessageSquare size={20} />} color="green" />
+            <StatCard title="Доля разговоров" value={outTotals?.contact_rate != null ? `${outTotals.contact_rate}%` : '—'} icon={<Percent size={20} />} color="purple" />
+          </div>
+          <div className="card p-6 mb-6 flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-slate-800">Обзвон за 7 дней</h2>
+              <button onClick={() => navigate('/analytics/outbound')} className="text-xs text-brand-600 hover:text-brand-800 flex items-center gap-1">Подробнее <ArrowRight size={12} /></button>
+            </div>
+            <div className="min-h-[240px]">
+              {outboundQuery.isLoading ? <PageSpinner /> : outByDay.some((d) => d.attempts > 0) ? (
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={outByDay} barGap={4}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="attempts" name="Попытки" fill="#93c5fd" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="contacts" name="Разговоры" fill="#22c55e" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="text-sm text-slate-400 text-center py-8">Нет данных обзвона за период</p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         {/* Chart */}
@@ -289,13 +350,14 @@ export default function DashboardPage() {
               const actualSl = q.sl_percent ?? null
               const ch = q.channel ?? ''
               const displaySl = actualSl ?? targetSl
+              const cnt = queueCounts[q.name]
               return (
                 <div key={q.name} className="flex items-center gap-3">
-                  <div className="w-48 min-w-0 flex-shrink-0">
+                  <div className="w-56 min-w-0 flex-shrink-0">
                     <p className="text-sm text-slate-700 truncate" title={q.name}>{q.name}</p>
                     <p className="text-xs text-slate-400">
-                      {ch || ''}
-                      {targetSl != null ? (ch ? ` · цель ${targetSl}%` : `цель ${targetSl}%`) : ''}
+                      {cnt ? `${cnt.total.toLocaleString()} зв · обр. ${cnt.handled.toLocaleString()} · пот. ${cnt.lost.toLocaleString()}` : (ch || 'нет звонков за 7 дней')}
+                      {targetSl != null ? ` · цель ${targetSl}%` : ''}
                     </p>
                   </div>
                   <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">

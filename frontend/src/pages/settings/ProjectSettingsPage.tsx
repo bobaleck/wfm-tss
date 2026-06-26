@@ -10,24 +10,33 @@ import PageHeader from '@/components/common/PageHeader'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { useProjectStore } from '@/store/project'
 
-interface QueueSetting { queue_name: string; target_sl: number | null; answer_sec: number | null }
-interface EditingState { uuid: string; customer_name: string; responsible_manager: string; target_sl: string }
+interface QueueSetting {
+  queue_name: string; target_sl: number | null; answer_sec: number | null
+  wrapup_sec?: number | null; show_in?: boolean; show_out?: boolean; hidden?: boolean
+}
+interface EditingState {
+  uuid: string; customer_name: string; responsible_manager: string; target_sl: string
+  has_inbound: boolean; has_outbound: boolean
+}
 
 // ─── Per-queue settings panel ─────────────────────────────────────────────────
 function QueueSettingsPanel({ project }: { project: Project }) {
   const qc = useQueryClient()
   const isManual = project.is_manual
   const [newQueue, setNewQueue] = useState('')
-  const [localEdits, setLocalEdits] = useState<Record<string, { target_sl: string; answer_sec: string }>>({})
+  const [localEdits, setLocalEdits] = useState<Record<string, { target_sl: string; answer_sec: string; wrapup_sec: string }>>({})
   const [naumenQueues, setNaumenQueues] = useState<string[]>([])
   const [loadingNaumen, setLoadingNaumen] = useState(false)
   const [saved, setSaved] = useState(false)
 
-  const { data: settings = [], refetch } = useQuery({
+  const { data: allSettings = [], refetch } = useQuery({
     queryKey: ['queue-settings', project.customer_uuid],
     queryFn: () =>
       api.get(`/queue-settings/${project.customer_uuid}`).then((r) => r.data as QueueSetting[]),
   })
+  // Исключаем служебные строки исходящих подпроектов (ключ "out:<uuid>") — они
+  // не входящие очереди, ими управляет отдельная панель ниже.
+  const settings = allSettings.filter((s) => !s.queue_name.startsWith('out:'))
 
   const saveMutation = useMutation({
     mutationFn: (items: QueueSetting[]) =>
@@ -73,9 +82,10 @@ function QueueSettingsPanel({ project }: { project: Project }) {
   const getEdit = (qName: string) => localEdits[qName] || {
     target_sl: settings.find((s) => s.queue_name === qName)?.target_sl?.toString() ?? '',
     answer_sec: settings.find((s) => s.queue_name === qName)?.answer_sec?.toString() ?? '',
+    wrapup_sec: settings.find((s) => s.queue_name === qName)?.wrapup_sec?.toString() ?? '',
   }
 
-  const setEdit = (qName: string, field: 'target_sl' | 'answer_sec', val: string) => {
+  const setEdit = (qName: string, field: 'target_sl' | 'answer_sec' | 'wrapup_sec', val: string) => {
     setLocalEdits((prev) => ({ ...prev, [qName]: { ...getEdit(qName), [field]: val } }))
   }
 
@@ -83,12 +93,27 @@ function QueueSettingsPanel({ project }: { project: Project }) {
     const items = settings.map((s) => {
       const e = localEdits[s.queue_name]
       return {
-        queue_name: s.queue_name,
+        ...s,
         target_sl: e?.target_sl !== undefined ? (e.target_sl ? parseInt(e.target_sl) : null) : s.target_sl,
         answer_sec: e?.answer_sec !== undefined ? (e.answer_sec ? parseInt(e.answer_sec) : null) : s.answer_sec,
+        wrapup_sec: e?.wrapup_sec !== undefined ? (e.wrapup_sec ? parseInt(e.wrapup_sec) : null) : s.wrapup_sec,
       }
     })
     saveMutation.mutate(items)
+  }
+
+  // Переключение «Вход / Исход / Не отображать» — сохраняем сразу для очереди.
+  // «Скрыть» взаимоисключающе с Вход/Исход: включаем «Скрыть» → снимаем Вход и
+  // Исход; включаем Вход или Исход → снимаем «Скрыть». Берём самую свежую строку
+  // настроек (на случай быстрых кликов), чтобы не сохранить устаревшие значения.
+  const toggleFlag = (s: QueueSetting, field: 'show_in' | 'show_out' | 'hidden') => {
+    const latest = settings.find((x) => x.queue_name === s.queue_name) || s
+    const cur = field === 'show_in' ? (latest.show_in ?? true) : field === 'show_out' ? (latest.show_out ?? false) : (latest.hidden ?? false)
+    const next = !cur
+    const patch: Partial<QueueSetting> = field === 'hidden'
+      ? (next ? { hidden: true, show_in: false, show_out: false } : { hidden: false })
+      : (next ? { [field]: true, hidden: false } : { [field]: false })
+    saveMutation.mutate([{ ...latest, ...patch }])
   }
 
   const hasEdits = Object.keys(localEdits).length > 0
@@ -121,35 +146,33 @@ function QueueSettingsPanel({ project }: { project: Project }) {
           {isManual ? 'Добавьте очереди вручную ниже.' : 'Нажмите "Синхронизировать из Naumen" чтобы загрузить очереди.'}
         </p>
       ) : (
-        <div className="space-y-1.5 mb-3">
-          <div className="grid grid-cols-[1fr_90px_90px_32px] gap-2 px-2 mb-1">
+        <div className="space-y-1.5 mb-3 overflow-x-auto">
+          <div className="grid grid-cols-[1fr_64px_64px_64px_40px_40px_52px_28px] gap-1.5 px-2 mb-1 min-w-[560px]">
             <span className="text-xs text-slate-400 font-medium">Очередь</span>
-            <span className="text-xs text-slate-400 font-medium text-center">Цел. SL (%)</span>
-            <span className="text-xs text-slate-400 font-medium text-center">Ответ (с)</span>
+            <span className="text-xs text-slate-400 font-medium text-center">SL %</span>
+            <span className="text-xs text-slate-400 font-medium text-center">Ответ с</span>
+            <span className="text-xs text-slate-400 font-medium text-center">ПВО с</span>
+            <span className="text-xs text-slate-400 font-medium text-center">Вход</span>
+            <span className="text-xs text-slate-400 font-medium text-center">Исход</span>
+            <span className="text-xs text-slate-400 font-medium text-center">Скрыть</span>
             <span />
           </div>
           {settings.map((s) => {
             const e = getEdit(s.queue_name)
             const isDirty = localEdits[s.queue_name] !== undefined
+            const sIn = s.show_in ?? true, sOut = s.show_out ?? false, sHid = s.hidden ?? false
             return (
-              <div key={s.queue_name} className={`grid grid-cols-[1fr_90px_90px_32px] gap-2 items-center px-2 py-1 rounded-lg ${isDirty ? 'bg-brand-50' : 'hover:bg-slate-50'}`}>
+              <div key={s.queue_name} className={`grid grid-cols-[1fr_64px_64px_64px_40px_40px_52px_28px] gap-1.5 items-center px-2 py-1 rounded-lg min-w-[560px] ${isDirty ? 'bg-brand-50' : sHid ? 'opacity-50 hover:opacity-100' : 'hover:bg-slate-50'}`}>
                 <span className="text-xs text-slate-700 truncate" title={s.queue_name}>{s.queue_name}</span>
-                <input
-                  type="number"
-                  className="input text-xs text-center py-1 px-1.5"
-                  placeholder="—"
-                  min={0} max={100}
-                  value={e.target_sl}
-                  onChange={(v) => setEdit(s.queue_name, 'target_sl', v.target.value)}
-                />
-                <input
-                  type="number"
-                  className="input text-xs text-center py-1 px-1.5"
-                  placeholder="—"
-                  min={0} max={300}
-                  value={e.answer_sec}
-                  onChange={(v) => setEdit(s.queue_name, 'answer_sec', v.target.value)}
-                />
+                <input type="number" className="input text-xs text-center py-1 px-1" placeholder="—" min={0} max={100}
+                  value={e.target_sl} onChange={(v) => setEdit(s.queue_name, 'target_sl', v.target.value)} />
+                <input type="number" className="input text-xs text-center py-1 px-1" placeholder="—" min={0} max={300}
+                  value={e.answer_sec} onChange={(v) => setEdit(s.queue_name, 'answer_sec', v.target.value)} />
+                <input type="number" className="input text-xs text-center py-1 px-1" placeholder="—" min={0} max={600}
+                  value={e.wrapup_sec} onChange={(v) => setEdit(s.queue_name, 'wrapup_sec', v.target.value)} />
+                <div className="flex justify-center"><input type="checkbox" checked={sIn} onChange={() => toggleFlag(s, 'show_in')} title="Показывать во «Вход»" /></div>
+                <div className="flex justify-center"><input type="checkbox" checked={sOut} onChange={() => toggleFlag(s, 'show_out')} title="Показывать в «Исход»" /></div>
+                <div className="flex justify-center"><input type="checkbox" checked={sHid} onChange={() => toggleFlag(s, 'hidden')} title="Не отображать" /></div>
                 <button onClick={() => deleteMutation.mutate(s.queue_name)}
                   className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors">
                   <Trash2 size={12} />
@@ -173,8 +196,68 @@ function QueueSettingsPanel({ project }: { project: Project }) {
       )}
 
       <p className="text-xs text-slate-400 mt-2">
-        Заполненные значения перекрывают данные из Naumen. Пустые = использовать значения Naumen.
+        SL %, время ответа и ПВО (постобработка, сек) перекрывают данные Naumen; пустые = из Naumen.
+        Галочки «Вход / Исход» определяют, в каком разделе аналитики показывать очередь, «Скрыть» — убрать из отображения.
       </p>
+    </div>
+  )
+}
+
+// ─── Исходящие линии (подпроекты обзвона) проекта ─────────────────────────────
+interface OutProjRow { project_uuid: string; name: string; status?: string; show_in?: boolean; show_out?: boolean; hidden?: boolean }
+function OutboundProjectsPanel({ project }: { project: Project }) {
+  const qc = useQueryClient()
+  const { data: projects = [], isLoading } = useQuery({
+    queryKey: ['outbound-projects', project.customer_uuid],
+    queryFn: () => api.get('/analytics/outbound-projects', { params: { partner_uuid: project.customer_uuid } })
+      .then((r) => r.data.data as OutProjRow[]),
+  })
+  // Настройки подпроекта — в queue_settings c ключом "out:<uuid>". «Скрыть»
+  // взаимоисключающе с Вход/Исход (как у входящих очередей).
+  const save = useMutation({
+    mutationFn: (body: any[]) => api.put(`/queue-settings/${project.customer_uuid}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['outbound-projects', project.customer_uuid] }),
+  })
+  const toggle = (p: OutProjRow, field: 'show_in' | 'show_out' | 'hidden') => {
+    const sIn = p.show_in ?? false, sOut = p.show_out ?? true, sHid = p.hidden ?? false
+    const cur = field === 'show_in' ? sIn : field === 'show_out' ? sOut : sHid
+    const next = !cur
+    const base = { queue_name: `out:${p.project_uuid}`, show_in: sIn, show_out: sOut, hidden: sHid }
+    const patch = field === 'hidden'
+      ? (next ? { hidden: true, show_in: false, show_out: false } : { hidden: false })
+      : (next ? { [field]: true, hidden: false } : { [field]: false })
+    save.mutate([{ ...base, ...patch }])
+  }
+  return (
+    <div className="mt-3 pt-3 border-t border-slate-200">
+      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide flex items-center gap-1.5 mb-2">
+        <PhoneCall size={12} /> Исходящие линии
+      </p>
+      {isLoading ? <p className="text-xs text-slate-400">Загрузка…</p>
+        : projects.length === 0 ? (
+          <p className="text-xs text-slate-400 italic">Нет исходящих подпроектов в Naumen (или нет подключения). Раздел «Аналитика (Исход)» всё равно доступен.</p>
+        ) : (
+          <div className="space-y-1">
+            <div className="grid grid-cols-[1fr_40px_40px_52px] gap-1.5 px-2 mb-0.5">
+              <span className="text-xs text-slate-400 font-medium">Линия</span>
+              <span className="text-xs text-slate-400 font-medium text-center">Вход</span>
+              <span className="text-xs text-slate-400 font-medium text-center">Исход</span>
+              <span className="text-xs text-slate-400 font-medium text-center">Скрыть</span>
+            </div>
+            {projects.map((p) => {
+              const sIn = p.show_in ?? false, sOut = p.show_out ?? true, sHid = p.hidden ?? false
+              return (
+                <div key={p.project_uuid} className={`grid grid-cols-[1fr_40px_40px_52px] gap-1.5 items-center px-2 py-1 rounded-lg text-xs ${sHid ? 'opacity-50 hover:opacity-100' : 'hover:bg-slate-50'}`}>
+                  <span className="text-slate-700 truncate" title={p.name}>{p.name}{p.status ? ` · ${p.status}` : ''}</span>
+                  <div className="flex justify-center"><input type="checkbox" checked={sIn} onChange={() => toggle(p, 'show_in')} title="Показывать во «Вход»" /></div>
+                  <div className="flex justify-center"><input type="checkbox" checked={sOut} onChange={() => toggle(p, 'show_out')} title="Показывать в «Исход»" /></div>
+                  <div className="flex justify-center"><input type="checkbox" checked={sHid} onChange={() => toggle(p, 'hidden')} title="Не отображать" /></div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      <p className="text-xs text-slate-400 mt-2">Список берётся из Naumen. «Вход/Исход» — где показывать линию, «Скрыть» — убрать из фильтров и сводок.</p>
     </div>
   )
 }
@@ -186,7 +269,7 @@ export default function ProjectSettingsPage() {
 
   const [showManualForm, setShowManualForm] = useState(false)
   const [manualForm, setManualForm] = useState({
-    customer_name: '', responsible_manager: '', target_sl: '',
+    customer_name: '', responsible_manager: '', target_sl: '', has_inbound: true, has_outbound: false,
   })
   const [availableProjects, setAvailableProjects] = useState<Project[]>([])
   const [loadingAvailable, setLoadingAvailable] = useState(false)
@@ -207,7 +290,11 @@ export default function ProjectSettingsPage() {
   const updateMutation = useMutation({
     mutationFn: ({ uuid, data }: { uuid: string; data: any }) =>
       api.put(`/integrations/tracked-projects/${uuid}`, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['tracked-projects'] }); setEditing(null) },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tracked-projects'] })
+      refreshProjectStore()  // подхватить новые линии в активном проекте → разделы аналитики
+      setEditing(null)
+    },
   })
 
   const removeMutation = useMutation({
@@ -238,9 +325,11 @@ export default function ProjectSettingsPage() {
       responsible_manager: manualForm.responsible_manager.trim() || null,
       target_sl: manualForm.target_sl ? parseInt(manualForm.target_sl) : null,
       is_manual: true,
+      has_inbound: manualForm.has_inbound,
+      has_outbound: manualForm.has_outbound,
     }, {
       onSuccess: () => {
-        setManualForm({ customer_name: '', responsible_manager: '', target_sl: '' })
+        setManualForm({ customer_name: '', responsible_manager: '', target_sl: '', has_inbound: true, has_outbound: false })
         setShowManualForm(false)
       },
     })
@@ -249,6 +338,7 @@ export default function ProjectSettingsPage() {
   const startEdit = (p: Project) => setEditing({
     uuid: p.customer_uuid, customer_name: p.customer_name,
     responsible_manager: p.responsible_manager || '', target_sl: p.target_sl != null ? String(p.target_sl) : '',
+    has_inbound: p.has_inbound ?? true, has_outbound: p.has_outbound ?? false,
   })
 
   const saveEdit = () => {
@@ -259,6 +349,8 @@ export default function ProjectSettingsPage() {
         customer_name: editing.customer_name,
         responsible_manager: editing.responsible_manager || null,
         target_sl: editing.target_sl ? parseInt(editing.target_sl) : null,
+        has_inbound: editing.has_inbound,
+        has_outbound: editing.has_outbound,
       },
     })
   }
@@ -316,6 +408,17 @@ export default function ProjectSettingsPage() {
                     onChange={(e) => setManualForm({ ...manualForm, target_sl: e.target.value })} placeholder="80" />
                 </div>
               </div>
+              <div className="flex items-center gap-4">
+                <span className="text-xs font-medium text-slate-600">Линии:</span>
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input type="checkbox" checked={manualForm.has_inbound} onChange={(e) => setManualForm({ ...manualForm, has_inbound: e.target.checked })} />
+                  Входящая линия
+                </label>
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input type="checkbox" checked={manualForm.has_outbound} onChange={(e) => setManualForm({ ...manualForm, has_outbound: e.target.checked })} />
+                  Исходящая линия
+                </label>
+              </div>
               <div className="flex gap-2">
                 <button type="submit" className="btn-primary" disabled={addMutation.isPending}>
                   {addMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
@@ -349,6 +452,17 @@ export default function ProjectSettingsPage() {
                           <span className="text-xs text-slate-400">%</span>
                         </div>
                       </div>
+                      <div className="flex items-center gap-4">
+                        <span className="text-xs font-medium text-slate-500">Линии проекта:</span>
+                        <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                          <input type="checkbox" checked={editing.has_inbound} onChange={(e) => setEditing({ ...editing, has_inbound: e.target.checked })} />
+                          Входящая линия
+                        </label>
+                        <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                          <input type="checkbox" checked={editing.has_outbound} onChange={(e) => setEditing({ ...editing, has_outbound: e.target.checked })} />
+                          Исходящая линия
+                        </label>
+                      </div>
                       <div className="flex gap-2">
                         <button onClick={saveEdit} className="btn-primary" disabled={updateMutation.isPending}>
                           <Save size={13} /> Сохранить
@@ -363,6 +477,8 @@ export default function ProjectSettingsPage() {
                           <p className="text-sm font-medium text-slate-800">{p.customer_name}</p>
                           {p.is_manual && <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full">Ручной</span>}
                           {p.target_sl != null && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">SL: {p.target_sl}%</span>}
+                          {(p.has_inbound ?? true) && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">Вход</span>}
+                          {(p.has_outbound ?? false) && <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Исход</span>}
                         </div>
                         {p.responsible_manager && <p className="text-xs text-slate-400 mt-0.5">{p.responsible_manager}</p>}
                       </div>
@@ -393,6 +509,7 @@ export default function ProjectSettingsPage() {
                   {expandedQueue === p.customer_uuid && (
                     <div className="px-4 pb-4">
                       <QueueSettingsPanel project={p} />
+                      {(p.has_outbound ?? false) && <OutboundProjectsPanel project={p} />}
                     </div>
                   )}
                 </div>

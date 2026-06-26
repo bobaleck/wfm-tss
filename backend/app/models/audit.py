@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, JSON, UniqueConstraint, func
+from sqlalchemy import Column, Integer, String, DateTime, Date, Boolean, ForeignKey, JSON, UniqueConstraint, func
 from app.core.database import Base
 
 
@@ -42,6 +42,10 @@ class TrackedProject(Base):
     responsible_manager = Column(String(200))
     target_sl = Column(Integer, nullable=True)          # целевой SL% для проекта
     is_manual = Column(Integer, default=0)              # 1 = добавлен вручную (не из Naumen)
+    # Виды деятельности (линии) проекта: входящая и/или исходящая. От них зависит,
+    # какие разделы аналитики показываются («Аналитика (Вход)» / «Аналитика (Исход)»).
+    has_inbound = Column(Boolean, default=True)
+    has_outbound = Column(Boolean, default=False)
     added_at = Column(DateTime, server_default=func.now())
 
 
@@ -53,6 +57,13 @@ class QueueSetting(Base):
     queue_name = Column(String(300), nullable=False)
     target_sl = Column(Integer, nullable=True)
     answer_sec = Column(Integer, nullable=True)
+    # Время постобработки (ПВО), допустимое для очереди, сек — настраивается вручную.
+    wrapup_sec = Column(Integer, nullable=True)
+    # Отображение очереди: во «Вход», в «Исход» и/или скрыть. Проставляются по
+    # умолчанию при добавлении (вход=да), но руководитель может переназначить.
+    show_in = Column(Boolean, default=True)
+    show_out = Column(Boolean, default=False)
+    hidden = Column(Boolean, default=False)
 
 
 class StatusConfig(Base):

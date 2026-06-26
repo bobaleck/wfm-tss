@@ -5,19 +5,22 @@ import api from '@/api/client'
 import PageHeader from '@/components/common/PageHeader'
 import { PageSpinner } from '@/components/ui/Spinner'
 import EmptyState from '@/components/common/EmptyState'
-import { AlertCircle, Radio, RefreshCw, Users } from 'lucide-react'
+import { AlertCircle, Radio, RefreshCw, Users, Search } from 'lucide-react'
 import { format } from 'date-fns'
 import { requiredAgents } from '@/utils/erlang'
 import { useStatusClassifier } from '@/utils/statusClassification'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import StatusTimeline from '@/components/StatusTimeline'
 import MonitoringStats from '@/pages/analytics/MonitoringStats'
+import OutboundMonitoringStats from '@/pages/analytics/OutboundMonitoringStats'
+import QueueFilterDropdown from '@/components/common/QueueFilterDropdown'
 
 interface CurrentOperator {
   login: string
   employee_name: string | null
   status: string
   entered: string
+  queues?: string[]
 }
 
 const REFRESH_MS = 5 * 1000   // онлайн-данные обновляются автоматически раз в 5 секунд
@@ -50,7 +53,12 @@ function OpRow({ op, labelFn, colorFn, onClick }: { op: CurrentOperator; labelFn
       title="Показать историю статусов"
     >
       <div className="min-w-0">
-        <p className="text-sm font-medium text-slate-800 truncate">{op.employee_name || op.login}</p>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <p className="text-sm font-medium text-slate-800 truncate">{op.employee_name || op.login}</p>
+          {(op.queues || []).map((q) => (
+            <span key={q} className="text-[10px] leading-none px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-medium whitespace-nowrap">{q}</span>
+          ))}
+        </div>
         <p className="text-xs text-slate-400">{op.login} · с {op.entered.slice(11, 16)}</p>
       </div>
       <span className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ml-2 ${colorFn(op.status, dur)}`}>
@@ -118,16 +126,25 @@ export default function LivePage() {
   const currentHour = new Date().getHours()
   const [tab, setTab] = useState<'operators' | 'stats'>('operators')
   const [lastRefreshed, setLastRefreshed] = useState(new Date())
+  const [selectedQueues, setSelectedQueues] = useState<Set<string>>(new Set())
+  const [opSearch, setOpSearch] = useState('')
   const [expandedLogins, setExpandedLogins] = useState<Set<string>>(new Set())
   const toggleExpanded = (login: string) =>
     setExpandedLogins((prev) => { const n = new Set(prev); n.has(login) ? n.delete(login) : n.add(login); return n })
 
+  // Линия мониторинга: вход / исход. Зависит от линий проекта; если есть обе —
+  // показываем переключатель. Очереди и статистика меняются под выбранную линию.
+  const hasInbound = activeProject?.has_inbound ?? true
+  const hasOutbound = activeProject?.has_outbound ?? false
+  const [lineSel, setLineSel] = useState<'in' | 'out'>('in')
+  const line: 'in' | 'out' = (lineSel === 'out' && hasOutbound) ? 'out' : (hasInbound ? 'in' : (hasOutbound ? 'out' : 'in'))
+
   const { classify, label: labelEx, color: colorEx } = useStatusClassifier(activeProject?.customer_uuid)
 
   const { data: currentOps, isLoading: loadingOps, refetch: refetchOps } = useQuery({
-    queryKey: ['current-operators', activeProject?.customer_uuid],
+    queryKey: ['current-operators', line, activeProject?.customer_uuid],
     queryFn: () =>
-      api.get('/analytics/current-operators', {
+      api.get(line === 'out' ? '/analytics/current-operators-outbound' : '/analytics/current-operators', {
         params: { partner_uuid: activeProject!.customer_uuid },
       }).then((r) => {
         setLastRefreshed(new Date())
@@ -137,6 +154,22 @@ export default function LivePage() {
     refetchInterval: REFRESH_MS,
     staleTime: REFRESH_MS,
   })
+
+  // Сводка обзвона за последний час — для карточек линии «Исход».
+  const { data: outRecent } = useQuery({
+    queryKey: ['recent-stats-outbound-60', activeProject?.customer_uuid],
+    queryFn: () =>
+      api.get('/analytics/recent-stats-outbound', {
+        params: { partner_uuid: activeProject!.customer_uuid, window_min: 60 },
+      }).then((r) => r.data as { by_operator: { attempts: number; contacts: number }[] }),
+    enabled: !!activeProject?.customer_uuid && line === 'out',
+    // Карточки «за час» — не нужны каждые 5 секунд; реже опрашиваем тяжёлый
+    // запрос по detail_outbound_sessions_ms, чтобы не нагружать Naumen.
+    refetchInterval: 30 * 1000,
+    staleTime: 30 * 1000,
+  })
+  const outAttempts1h = (outRecent?.by_operator || []).reduce((a, o) => a + (o.attempts || 0), 0)
+  const outContacts1h = (outRecent?.by_operator || []).reduce((a, o) => a + (o.contacts || 0), 0)
 
   const { data: staffingForecast } = useQuery({
     queryKey: ['staffing-forecast-today', activeProject?.customer_uuid],
@@ -168,6 +201,19 @@ export default function LivePage() {
       s.start_time && s.end_time &&
       now >= new Date(s.start_time).getTime() && now <= new Date(s.end_time).getTime())
   }, [todayShifts, lastRefreshed])
+
+  // «По графику сейчас» с учётом линии, выбранных очередей и поиска:
+  // — смена с заданной линией показывается только на своей линии (без линии — на всех);
+  // — при выбранных очередях показываем смены с пересечением (без очереди — во всех);
+  // — плюс поиск по сотруднику.
+  const scheduledShown = useMemo(() => scheduledNow.filter((s: any) => {
+    const slines = s.line ? String(s.line).split(',').map((x: string) => x.trim()).filter(Boolean) : []
+    const sq = s.queue_names ? String(s.queue_names).split(',').map((x: string) => x.trim()).filter(Boolean) : []
+    if (slines.length && !slines.includes(line)) return false
+    if (selectedQueues.size > 0 && sq.length > 0 && !sq.some((q: string) => selectedQueues.has(q))) return false
+    const nm = (s.employee_name || `#${s.employee_id}`)
+    return !opSearch.trim() || nm.toLowerCase().includes(opSearch.trim().toLowerCase())
+  }), [scheduledNow, line, selectedQueues, opSearch])
 
   // SL за последние сутки (по проекту, взвешенно по числу звонков)
   const { data: dayStats } = useQuery({
@@ -214,10 +260,38 @@ export default function LivePage() {
     return Math.max(1, Math.ceil(min / (1 - 0.30)))
   }, [staffingForecast, currentHour])
 
-  // All operators with status within 24h window
+  // Исходящие подпроекты — чтобы фильтр очередей не пропадал на линии «Исход».
+  const { data: outboundProjects } = useQuery({
+    queryKey: ['outbound-projects', activeProject?.customer_uuid],
+    queryFn: () => api.get('/analytics/outbound-projects', { params: { partner_uuid: activeProject!.customer_uuid } }).then((r) => r.data.data as { name: string; hidden?: boolean }[]),
+    enabled: !!activeProject?.customer_uuid && line === 'out',
+    staleTime: 10 * 60 * 1000,
+  })
+
+  // Очереди для фильтра: на «Вход» — очереди операторов, на «Исход» — исходящие
+  // подпроекты (не зависят от наличия онлайн-операторов, поэтому фильтр не пропадает;
+  // скрытые подпроекты исключаем).
+  const opQueues = useMemo(() => [...new Set((currentOps || []).flatMap((o) => o.queues || []))].sort(), [currentOps])
+  const allQueues = useMemo(() => {
+    if (line === 'out') {
+      const names = new Set<string>()
+      for (const p of (outboundProjects || [])) if (!p.hidden && p.name) names.add(p.name)
+      for (const q of opQueues) names.add(q)   // подстраховка очередями онлайн-операторов
+      return [...names].sort()
+    }
+    return opQueues
+  }, [line, outboundProjects, opQueues])
+
+  // Поиск по сотруднику — общий для всех окон.
+  const matchSearch = (name: string) => !opSearch.trim() || name.toLowerCase().includes(opSearch.trim().toLowerCase())
+
+  // All operators with status within 24h window, отфильтрованные по очередям и поиску.
   const recentOps = useMemo(
-    () => (currentOps || []).filter((o) => withinWindow(o.entered, WINDOW_H)),
-    [currentOps],
+    () => (currentOps || []).filter((o) =>
+      withinWindow(o.entered, WINDOW_H) &&
+      (selectedQueues.size === 0 || (o.queues || []).some((q) => selectedQueues.has(q))) &&
+      (!opSearch.trim() || (o.employee_name || o.login).toLowerCase().includes(opSearch.trim().toLowerCase()))),
+    [currentOps, selectedQueues, opSearch],
   )
 
   const onlineOps = useMemo(
@@ -257,7 +331,28 @@ export default function LivePage() {
 
   return (
     <div>
-      <PageHeader title="Мониторинг" subtitle={activeProject.customer_name} />
+      <PageHeader
+        title="Мониторинг"
+        subtitle={activeProject.customer_name}
+        actions={
+          <div className="flex items-center gap-2">
+            {hasInbound && hasOutbound && (
+              <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
+                {([['in', 'Вход'], ['out', 'Исход']] as const).map(([id, lbl]) => (
+                  <button key={id} onClick={() => { setLineSel(id); setSelectedQueues(new Set()) }}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${line === id ? 'bg-brand-500 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            )}
+            {(allQueues.length > 1 || (line === 'out' && allQueues.length >= 1)) && (
+              <QueueFilterDropdown queues={allQueues} selected={selectedQueues} onChange={setSelectedQueues}
+                label="" align="right" allLabel={line === 'out' ? 'Все линии' : 'Все очереди'} title={line === 'out' ? 'Фильтр по линиям' : 'Фильтр по очередям'} />
+            )}
+          </div>
+        }
+      />
 
       {/* Вкладки раздела */}
       <div className="flex gap-1 mb-5 border-b border-slate-200">
@@ -269,7 +364,9 @@ export default function LivePage() {
         ))}
       </div>
 
-      {tab === 'stats' ? <MonitoringStats /> : (<>
+      {tab === 'stats' ? (line === 'out'
+        ? <OutboundMonitoringStats externalQueues={selectedQueues} />
+        : <MonitoringStats externalQueues={selectedQueues} />) : (<>
 
       {/* Status bar */}
       <div className="flex items-center justify-between mb-5 bg-slate-800 rounded-xl px-5 py-3">
@@ -277,15 +374,53 @@ export default function LivePage() {
           <Radio size={14} className="text-green-400 animate-pulse" />
           <span>Обновление каждые 5 секунд · Последнее: {format(lastRefreshed, 'HH:mm:ss')}</span>
         </div>
-        <button
-          onClick={() => { setLastRefreshed(new Date()); refetchOps() }}
-          className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white transition-colors"
-        >
-          <RefreshCw size={13} /> Обновить сейчас
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              value={opSearch}
+              onChange={(e) => setOpSearch(e.target.value)}
+              placeholder="Поиск сотрудника…"
+              className="pl-7 pr-2 py-1.5 rounded-lg bg-slate-700 text-sm text-slate-100 placeholder-slate-400 border border-slate-600 focus:border-brand-400 outline-none w-48"
+            />
+          </div>
+          <button
+            onClick={() => { setLastRefreshed(new Date()); refetchOps() }}
+            className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white transition-colors"
+          >
+            <RefreshCw size={13} /> Обновить сейчас
+          </button>
+        </div>
       </div>
 
       {/* Summary cards */}
+      {line === 'out' ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="card p-5 border-green-200 bg-green-50">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Операторов в линии</p>
+              <Users size={16} className="text-green-600" />
+            </div>
+            <p className="text-3xl font-bold text-green-700">{actualOnlineCount}</p>
+            <p className="text-xs text-slate-500 mt-1">Сейчас на обзвоне</p>
+          </div>
+          <div className="card p-5 border-blue-200 bg-blue-50">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Попыток за час</p>
+            <p className="text-3xl font-bold text-blue-700">{outAttempts1h.toLocaleString()}</p>
+            <p className="text-xs text-slate-500 mt-1">За последние 60 минут</p>
+          </div>
+          <div className="card p-5 border-emerald-200 bg-emerald-50">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Контактов за час</p>
+            <p className="text-3xl font-bold text-emerald-700">{outContacts1h.toLocaleString()}</p>
+            <p className="text-xs text-slate-500 mt-1">Разговор &gt; 10 секунд</p>
+          </div>
+          <div className="card p-5 border-slate-200">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Contact rate</p>
+            <p className="text-3xl font-bold text-slate-900">{outAttempts1h > 0 ? `${Math.round(outContacts1h / outAttempts1h * 100)}%` : '—'}</p>
+            <p className="text-xs text-slate-500 mt-1">Контакты / попытки</p>
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className={`card p-5 ${isUnderstaffed ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
@@ -310,7 +445,7 @@ export default function LivePage() {
 
         <div className="card p-5 border-blue-200 bg-blue-50">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">По графику сейчас</p>
-          <p className="text-3xl font-bold text-blue-700">{scheduledNow.length}</p>
+          <p className="text-3xl font-bold text-blue-700">{scheduledShown.length}</p>
           <p className="text-xs text-slate-500 mt-1">Должны работать (активные смены)</p>
         </div>
 
@@ -320,6 +455,7 @@ export default function LivePage() {
           <p className="text-xs text-slate-500 mt-1">Вышли за 24ч: {offlineOps.length}</p>
         </div>
       </div>
+      )}
 
       {loadingOps ? <PageSpinner /> : !recentOps.length ? (
         <EmptyState title="Нет данных за последние 24 часа" description="Проверьте настройки интеграции с Naumen" />
@@ -357,10 +493,10 @@ export default function LivePage() {
           <Section
             dotColor="bg-blue-400"
             title="По графику сейчас (активные смены)"
-            count={scheduledNow.length}
+            count={scheduledShown.length}
             empty="Сейчас по графику никто не работает"
           >
-            {scheduledNow.map((s: any) => (
+            {scheduledShown.map((s: any) => (
               <div key={s.id} className="flex items-center justify-between px-4 py-3">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-slate-800 truncate">{s.employee_name || `#${s.employee_id}`}</p>

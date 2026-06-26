@@ -20,6 +20,8 @@ export interface Project {
   responsible_manager?: string
   target_sl?: number | null
   is_manual?: boolean
+  has_inbound?: boolean
+  has_outbound?: boolean
 }
 
 export type EmploymentStatus = 'new' | 'active' | 'fired'
@@ -120,6 +122,8 @@ export interface Shift {
   end_time: string | null
   lunch_minutes: number | null
   lunch_start: string | null
+  queue_names: string | null
+  line: string | null
   status: string
   notes: string | null
   actual_start_time: string | null

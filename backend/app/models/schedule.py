@@ -41,6 +41,12 @@ class Shift(Base):
     # (если не задано/0 — без обеда) и, опционально, время начала обеда.
     lunch_minutes = Column(Integer, nullable=True)
     lunch_start = Column(String(20), nullable=True)
+    # Очереди, в которые ставят оператора на смену (необязательно). Несколько —
+    # через запятую (можно указать одну или две). Хранится как имена очередей.
+    queue_names = Column(Text, nullable=True)
+    # Линия(и) смены: 'in', 'out' или 'in,out' (или пусто — резерв). Определяет,
+    # какие очереди доступны для выбора и в каком разделе мониторинга показывать.
+    line = Column(String(20), nullable=True)
     status = Column(String(50), default="planned")  # planned, confirmed, completed, cancelled
     notes = Column(Text)
     # Фактически отработанное время (заполняется при сверке или вручную)

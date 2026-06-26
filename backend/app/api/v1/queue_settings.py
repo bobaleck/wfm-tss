@@ -14,6 +14,10 @@ class QueueSettingIn(BaseModel):
     queue_name: str
     target_sl: Optional[int] = None
     answer_sec: Optional[int] = None
+    wrapup_sec: Optional[int] = None
+    show_in: Optional[bool] = None
+    show_out: Optional[bool] = None
+    hidden: Optional[bool] = None
 
 
 @router.get("/{partner_uuid}")
@@ -24,6 +28,10 @@ def get_queue_settings(partner_uuid: str, db: Session = Depends(get_db), _=Depen
             "queue_name": r.queue_name,
             "target_sl": r.target_sl,
             "answer_sec": r.answer_sec,
+            "wrapup_sec": r.wrapup_sec,
+            "show_in": bool(r.show_in) if r.show_in is not None else True,
+            "show_out": bool(r.show_out) if r.show_out is not None else False,
+            "hidden": bool(r.hidden) if r.hidden is not None else False,
         }
         for r in rows
     ]
@@ -44,12 +52,23 @@ def save_queue_settings(
         if existing:
             existing.target_sl = item.target_sl
             existing.answer_sec = item.answer_sec
+            existing.wrapup_sec = item.wrapup_sec
+            if item.show_in is not None:
+                existing.show_in = item.show_in
+            if item.show_out is not None:
+                existing.show_out = item.show_out
+            if item.hidden is not None:
+                existing.hidden = item.hidden
         else:
             db.add(QueueSetting(
                 partner_uuid=partner_uuid,
                 queue_name=item.queue_name,
                 target_sl=item.target_sl,
                 answer_sec=item.answer_sec,
+                wrapup_sec=item.wrapup_sec,
+                show_in=item.show_in if item.show_in is not None else True,
+                show_out=item.show_out if item.show_out is not None else False,
+                hidden=item.hidden if item.hidden is not None else False,
             ))
     db.commit()
     return {"ok": True, "updated": len(items)}

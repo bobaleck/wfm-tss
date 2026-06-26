@@ -349,7 +349,7 @@ function TeamNode({ team, allTeams, allEmployees, level, onEdit, onDelete, onAdd
                             <button
                               onClick={() => onAssignShifts(emp)}
                               className="p-1 hover:bg-blue-50 rounded text-slate-400 hover:text-blue-600 transition-colors"
-                              title="Проставить смены"
+                              title="Поставить смены"
                             >
                               <Clock4 size={13} />
                             </button>
@@ -483,8 +483,8 @@ export default function TeamsPage() {
       {showForm && <Modal open title="Новая команда" onClose={() => setShowForm(false)}><TeamForm teams={allTeams} projectUuid={activeProject?.customer_uuid} onClose={() => setShowForm(false)} /></Modal>}
       {editTeam && <Modal open title="Редактировать команду" onClose={() => setEditTeam(null)}><TeamForm team={editTeam} teams={allTeams} projectUuid={activeProject?.customer_uuid} onClose={() => setEditTeam(null)} /></Modal>}
       {addMemberTeam && <Modal open title={`Добавить сотрудника — ${addMemberTeam.name}`} onClose={() => setAddMemberTeam(null)}><AddMemberModal team={addMemberTeam} onClose={() => setAddMemberTeam(null)} /></Modal>}
-      {shiftEmp && <Modal open size="xl" title={`Смены: ${shiftEmp.full_name}`} onClose={() => setShiftEmp(null)}><ShiftAssignModal employee={shiftEmp} onClose={() => setShiftEmp(null)} /></Modal>}
-      {viewShiftsEmp && <Modal open size="xl" title={`Смены (просмотр): ${viewShiftsEmp.full_name}`} onClose={() => setViewShiftsEmp(null)}><ShiftAssignModal employee={viewShiftsEmp} readOnly onClose={() => setViewShiftsEmp(null)} /></Modal>}
+      {shiftEmp && <Modal open size="xl" title={`Смены: ${shiftEmp.full_name}`} onClose={() => setShiftEmp(null)}><ShiftAssignModal employee={shiftEmp} projectUuid={activeProject?.customer_uuid} onClose={() => setShiftEmp(null)} /></Modal>}
+      {viewShiftsEmp && <Modal open size="xl" title={`Смены (просмотр): ${viewShiftsEmp.full_name}`} onClose={() => setViewShiftsEmp(null)}><ShiftAssignModal employee={viewShiftsEmp} readOnly onEdit={() => { const e = viewShiftsEmp; setViewShiftsEmp(null); setShiftEmp(e) }} onClose={() => setViewShiftsEmp(null)} /></Modal>}
     </div>
   )
 }
