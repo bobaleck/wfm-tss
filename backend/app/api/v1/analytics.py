@@ -191,8 +191,9 @@ def get_status_summary(
     begin: date = Query(...),
     end: date = Query(...),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    check_project_access(partner_uuid, current_user, db)
     try:
         data = naumen.get_status_summary(partner_uuid, str(begin), _exclusive_end(end), _build_overrides(db))
         return {"data": data}
@@ -206,12 +207,13 @@ def get_operator_sessions(
     begin: date = Query(...),
     end: date = Query(...),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """
     История сессий операторов из Naumen status_changes.
     Берёт логины сотрудников проекта из локальной БД, обогащает именами.
     """
+    check_project_access(partner_uuid, current_user, db)
     if end < begin:
         raise HTTPException(400, detail="end не может быть раньше begin")
 
@@ -243,12 +245,16 @@ def get_operator_timeline(
     login: str,
     work_date: Optional[str] = None,
     hours: Optional[int] = None,
+    partner_uuid: Optional[str] = None,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Временная линия статусов оператора — либо за календарный день (work_date,
     используется в Сменах), либо за скользящее окно в hours часов до текущего
-    момента (используется в Онлайн-мониторинге)."""
+    момента (используется в Онлайн-мониторинге). partner_uuid — для проектной
+    изоляции: фронт передаёт проект, из которого открыт таймлайн."""
+    if partner_uuid:
+        check_project_access(partner_uuid, current_user, db)
     try:
         if hours is not None:
             data = naumen.get_operator_timeline_window(login, hours, _build_overrides(db))
@@ -269,9 +275,10 @@ def get_actual_operators(
     begin: date = Query(...),
     end: date = Query(...),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Среднее фактическое число операторов по часам суток за период."""
+    check_project_access(partner_uuid, current_user, db)
     if end < begin:
         raise HTTPException(400, detail="end не может быть раньше begin")
     employees = db.query(Employee).filter(
@@ -317,10 +324,11 @@ async def upload_customer_demand(
     partner_uuid: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _=Depends(require_manager),
+    current_user=Depends(require_manager),
 ):
     """Загрузка потребности «от заказчика» из Excel и сохранение на проект.
     Лист со строками-датами и колонками-часами (00:00..23:00); число дней любое."""
+    check_project_access(partner_uuid, current_user, db)
     import io
     import openpyxl
 
@@ -431,8 +439,9 @@ def customer_demand_template(_=Depends(get_current_user)):
 def get_customer_demand(
     partner_uuid: str,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    check_project_access(partner_uuid, current_user, db)
     rows = db.query(CustomerDemand).filter(
         CustomerDemand.project_uuid == partner_uuid,
     ).order_by(CustomerDemand.demand_date, CustomerDemand.hour).all()
@@ -465,11 +474,12 @@ def get_actual_operators_by_queue_ep(
     end: date = Query(...),
     queues: Optional[list[str]] = Query(None),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Факт операторов по часам с учётом очередей. Если queues заданы — union
     по выбранным очередям (мультиочередной оператор не задваивается). Доп. ключ
     by_queue — разрез по каждой очереди."""
+    check_project_access(partner_uuid, current_user, db)
     if end < begin:
         raise HTTPException(400, detail="end не может быть раньше begin")
     try:
@@ -488,9 +498,10 @@ def get_actual_operators_by_queue_ep(
 def get_current_operators(
     partner_uuid: str,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Текущий статус операторов проекта — берёт логины прямо из Naumen."""
+    check_project_access(partner_uuid, current_user, db)
     # Local name overrides (our DB has richer names)
     employees = db.query(Employee).filter(
         Employee.project_uuid == partner_uuid,
@@ -523,9 +534,10 @@ def get_current_operators(
 def get_current_operators_outbound(
     partner_uuid: str,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Текущий статус операторов ИСХОДЯЩИХ линий проекта (для Мониторинга, линия «Исход»)."""
+    check_project_access(partner_uuid, current_user, db)
     employees = db.query(Employee).filter(
         Employee.project_uuid == partner_uuid,
         Employee.naumen_login.isnot(None),
@@ -555,14 +567,16 @@ def get_current_operators_outbound(
 def get_recent_stats_outbound_ep(
     partner_uuid: str,
     window_min: int = Query(1440, ge=1, le=1440),
+    queues: Optional[list[str]] = Query(None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Live-статистика исходящего обзвона за последние window_min минут: по
-    операторам и по результату попыток (Мониторинг → Статистика, линия «Исход»)."""
+    операторам и по результату попыток (Мониторинг → Статистика, линия «Исход»).
+    queues — фильтр по выбранным исходящим подпроектам (по названию)."""
     check_project_access(partner_uuid, current_user, db)
     try:
-        return naumen.get_recent_stats_outbound(partner_uuid, int(window_min), _build_overrides(db))
+        return naumen.get_recent_stats_outbound(partner_uuid, int(window_min), _build_overrides(db), queues or None)
     except Exception as e:
         raise HTTPException(503, detail=str(e))
 
@@ -661,8 +675,9 @@ def get_naumen_employees(
     begin: date = Query(...),
     end: date = Query(...),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    check_project_access(partner_uuid, current_user, db)
     try:
         data = naumen.get_naumen_employees(partner_uuid, str(begin), _exclusive_end(end), _build_overrides(db))
         return {"data": data}

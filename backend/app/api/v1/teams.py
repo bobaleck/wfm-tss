@@ -6,7 +6,7 @@ from app.core.database import get_db
 from app.models.team import Team, TeamUser
 from app.models.employee import Employee
 from app.schemas.team import TeamCreate, TeamUpdate, TeamOut, TeamTreeNode
-from app.api.deps import get_current_user, require_manager
+from app.api.deps import get_current_user, require_manager, check_project_access, resolve_project_scope
 
 router = APIRouter()
 
@@ -41,25 +41,29 @@ def _build_tree(teams: List[Team], parent_id, db: Session) -> List[dict]:
 
 
 @router.get("", response_model=List[TeamOut])
-def list_teams(project_uuid: Optional[str] = None, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_teams(project_uuid: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    scope = resolve_project_scope(project_uuid, current_user, db)
     q = db.query(Team)
-    if project_uuid:
-        q = q.filter(Team.project_uuid == project_uuid)
+    if scope is not None:
+        q = q.filter(Team.project_uuid.in_(scope))
     teams = q.order_by(Team.name).all()
     return [_enrich(t, db) for t in teams]
 
 
 @router.get("/tree", response_model=List[TeamTreeNode])
-def teams_tree(project_uuid: Optional[str] = None, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def teams_tree(project_uuid: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    scope = resolve_project_scope(project_uuid, current_user, db)
     q = db.query(Team)
-    if project_uuid:
-        q = q.filter(Team.project_uuid == project_uuid)
+    if scope is not None:
+        q = q.filter(Team.project_uuid.in_(scope))
     all_teams = q.all()
     return _build_tree(all_teams, None, db)
 
 
 @router.post("", response_model=TeamOut, status_code=201)
-def create_team(body: TeamCreate, db: Session = Depends(get_db), _=Depends(require_manager)):
+def create_team(body: TeamCreate, db: Session = Depends(get_db), current_user=Depends(require_manager)):
+    if getattr(body, "project_uuid", None):
+        check_project_access(body.project_uuid, current_user, db)
     data = body.model_dump()
     user_ids = data.pop("user_ids", []) or []
     team = Team(**data)
@@ -73,18 +77,22 @@ def create_team(body: TeamCreate, db: Session = Depends(get_db), _=Depends(requi
 
 
 @router.get("/{team_id}", response_model=TeamOut)
-def get_team(team_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def get_team(team_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     team = db.query(Team).filter(Team.id == team_id).first()
     if not team:
         raise HTTPException(404, detail="Не найдена")
+    if team.project_uuid:
+        check_project_access(team.project_uuid, current_user, db)
     return _enrich(team, db)
 
 
 @router.put("/{team_id}", response_model=TeamOut)
-def update_team(team_id: int, body: TeamUpdate, db: Session = Depends(get_db), _=Depends(require_manager)):
+def update_team(team_id: int, body: TeamUpdate, db: Session = Depends(get_db), current_user=Depends(require_manager)):
     team = db.query(Team).filter(Team.id == team_id).first()
     if not team:
         raise HTTPException(404, detail="Не найдена")
+    if team.project_uuid:
+        check_project_access(team.project_uuid, current_user, db)
     data = body.model_dump(exclude_unset=True)
     user_ids = data.pop("user_ids", None)
     for k, v in data.items():
@@ -97,9 +105,11 @@ def update_team(team_id: int, body: TeamUpdate, db: Session = Depends(get_db), _
 
 
 @router.delete("/{team_id}", status_code=204)
-def delete_team(team_id: int, db: Session = Depends(get_db), _=Depends(require_manager)):
+def delete_team(team_id: int, db: Session = Depends(get_db), current_user=Depends(require_manager)):
     team = db.query(Team).filter(Team.id == team_id).first()
     if not team:
         raise HTTPException(404, detail="Не найдена")
+    if team.project_uuid:
+        check_project_access(team.project_uuid, current_user, db)
     db.delete(team)
     db.commit()

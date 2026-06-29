@@ -120,6 +120,29 @@ export default function QueuesPage() {
     return Object.values(byPeriod).sort((a: any, b: any) => (a.period < b.period ? -1 : 1))
   }, [workload, shownQueues, interval, metric])
 
+  // ВАЖНО: эти хуки должны идти ДО раннего return по !activeProject ниже —
+  // иначе при переходе activeProject null→объект меняется число вызванных хуков
+  // и React падает с "Rendered more hooks than during the previous render".
+  const queueTargetSl = useMemo(() => {
+    const map: Record<string, number | null> = {}
+    for (const q of queues || []) map[q.name] = q.target_sl ?? null
+    return map
+  }, [queues])
+
+  const wFiltered = useMemo(() => {
+    const base = workload || []
+    return selectedQueues.size === 0 ? base : base.filter((r) => selectedQueues.has(r.queue_name))
+  }, [workload, selectedQueues])
+
+  const sortedPeriod = useMemo(() => {
+    return [...wFiltered].sort((a, b) => {
+      const av = (a as any)[periodSort] ?? ''
+      const bv = (b as any)[periodSort] ?? ''
+      const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv))
+      return periodDir === 'asc' ? cmp : -cmp
+    })
+  }, [wFiltered, periodSort, periodDir])
+
   if (!activeProject) return (
     <div>
       <PageHeader title="Очереди" />
@@ -140,32 +163,11 @@ export default function QueuesPage() {
     perQueue[q].lost += r.lost || 0
     if (r.sl_percent != null) { perQueue[q].slSum += r.sl_percent; perQueue[q].slCount++ }
   }
-  // Build target_sl lookup by queue name
-  const queueTargetSl = useMemo(() => {
-    const map: Record<string, number | null> = {}
-    for (const q of queues || []) map[q.name] = q.target_sl ?? null
-    return map
-  }, [queues])
-
   const shownSet = new Set(shownQueues)
   const chartData = Object.values(perQueue)
     .filter((d) => shownSet.has(d.name))
     .map((d) => ({ ...d, sl: d.slCount > 0 ? Math.round(d.slSum / d.slCount) : null, target_sl: queueTargetSl[d.name] }))
     .sort((a, b) => b.total - a.total)
-
-  const wFiltered = useMemo(() => {
-    const base = workload || []
-    return selectedQueues.size === 0 ? base : base.filter((r) => selectedQueues.has(r.queue_name))
-  }, [workload, selectedQueues])
-
-  const sortedPeriod = useMemo(() => {
-    return [...wFiltered].sort((a, b) => {
-      const av = (a as any)[periodSort] ?? ''
-      const bv = (b as any)[periodSort] ?? ''
-      const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv))
-      return periodDir === 'asc' ? cmp : -cmp
-    })
-  }, [wFiltered, periodSort, periodDir])
 
 
   return (

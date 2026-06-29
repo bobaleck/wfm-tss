@@ -71,8 +71,8 @@ export default function ShiftAssignModal({ employee, initialEmpIds, employees, p
   const [saving, setSaving] = useState(false)
 
   const { data: schedules } = useQuery({
-    queryKey: ['schedules'],
-    queryFn: () => api.get('/schedules').then((r) => r.data as Schedule[]),
+    queryKey: ['schedules', projectUuid],
+    queryFn: () => api.get('/schedules', { params: { project_uuid: projectUuid } }).then((r) => r.data as Schedule[]),
   })
 
   const { data: fetchedEmps } = useQuery({
@@ -116,8 +116,12 @@ export default function ShiftAssignModal({ employee, initialEmpIds, employees, p
   }
   const visibleQueuesFor = (line: LineId[]) => qNames.filter((name) => allowedByLine(name, line))
 
-  const rangeFrom = fmt(addMonths(startOfMonth(new Date()), -3))
-  const rangeTo = fmt(addMonths(endOfMonth(new Date()), 6))
+  // Окно подгрузки существующих смен — вокруг РЕДАКТИРУЕМОЙ даты (initialDate),
+  // а не только текущего месяца: иначе при правке смены далеко в будущем/прошлом
+  // существующие смены не попадут в выборку и сохранение создаст дубликаты.
+  const rangeAnchor = initialDate ? new Date(initialDate + 'T00:00:00') : new Date()
+  const rangeFrom = fmt(addMonths(startOfMonth(rangeAnchor), -3))
+  const rangeTo = fmt(addMonths(endOfMonth(rangeAnchor), 6))
   const { data: rangeShifts } = useQuery({
     queryKey: ['assign-range-shifts', projectUuid, rangeFrom, rangeTo, primaryEmpId, readOnly],
     queryFn: () => api.get('/schedules/shifts', {

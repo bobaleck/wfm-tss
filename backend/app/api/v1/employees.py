@@ -11,7 +11,7 @@ from app.models.team import Team
 from app.models.skill import Skill
 from app.models.audit import IntegrationSettings
 from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmployeeOut, EmployeeSkillOut
-from app.api.deps import get_current_user, require_manager
+from app.api.deps import get_current_user, require_manager, check_project_access, resolve_project_scope
 import app.services.naumen_db as naumen
 
 router = APIRouter()
@@ -49,11 +49,13 @@ def list_employees(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    # Проектная изоляция: scope — множество доступных проектов (или None=все).
+    scope = resolve_project_scope(project_uuid, current_user, db)
     q = db.query(Employee).options(joinedload(Employee.team), joinedload(Employee.skills).joinedload(EmployeeSkill.skill))
-    if project_uuid:
-        q = q.filter(Employee.project_uuid == project_uuid)
+    if scope is not None:
+        q = q.filter(Employee.project_uuid.in_(scope))
     if team_id:
         q = q.filter(Employee.team_id == team_id)
     if is_active is not None:
@@ -67,7 +69,9 @@ def list_employees(
 
 
 @router.post("", response_model=EmployeeOut, status_code=201)
-def create_employee(body: EmployeeCreate, db: Session = Depends(get_db), _=Depends(require_manager)):
+def create_employee(body: EmployeeCreate, db: Session = Depends(get_db), current_user=Depends(require_manager)):
+    if body.project_uuid:
+        check_project_access(body.project_uuid, current_user, db)
     skill_ids = body.skill_ids or []
     data = body.model_dump(exclude={"skill_ids"})
     # added_manually=True — синхронизация с Naumen никогда не трогает эту карточку
@@ -183,8 +187,9 @@ def _run_sync(project_uuid: str, overrides: Optional[dict]):
 def sync_from_naumen(
     project_uuid: str = Query(..., description="UUID партнёра (customer_uuid)"),
     db: Session = Depends(get_db),
-    _=Depends(require_manager),
+    current_user=Depends(require_manager),
 ):
+    check_project_access(project_uuid, current_user, db)
     """
     Запускает синхронизацию сотрудников с Naumen в фоновом потоке (см. _run_sync) и
     сразу возвращает ответ — для крупных проектов (300+ операторов) сама синхронизация
@@ -210,24 +215,28 @@ def sync_status(
 
 
 @router.get("/{emp_id}", response_model=EmployeeOut)
-def get_employee(emp_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def get_employee(emp_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     emp = db.query(Employee).options(
         joinedload(Employee.team),
         joinedload(Employee.skills).joinedload(EmployeeSkill.skill)
     ).filter(Employee.id == emp_id).first()
     if not emp:
         raise HTTPException(404, detail="Не найден")
+    if emp.project_uuid:
+        check_project_access(emp.project_uuid, current_user, db)
     return _enrich(emp)
 
 
 @router.put("/{emp_id}", response_model=EmployeeOut)
-def update_employee(emp_id: int, body: EmployeeUpdate, db: Session = Depends(get_db), _=Depends(require_manager)):
+def update_employee(emp_id: int, body: EmployeeUpdate, db: Session = Depends(get_db), current_user=Depends(require_manager)):
     emp = db.query(Employee).options(
         joinedload(Employee.team),
         joinedload(Employee.skills).joinedload(EmployeeSkill.skill)
     ).filter(Employee.id == emp_id).first()
     if not emp:
         raise HTTPException(404, detail="Не найден")
+    if emp.project_uuid:
+        check_project_access(emp.project_uuid, current_user, db)
     data = body.model_dump(exclude_unset=True)
     skill_ids = data.pop("skill_ids", None)
     for k, v in data.items():
@@ -242,9 +251,11 @@ def update_employee(emp_id: int, body: EmployeeUpdate, db: Session = Depends(get
 
 
 @router.delete("/{emp_id}", status_code=204)
-def delete_employee(emp_id: int, db: Session = Depends(get_db), _=Depends(require_manager)):
+def delete_employee(emp_id: int, db: Session = Depends(get_db), current_user=Depends(require_manager)):
     emp = db.query(Employee).filter(Employee.id == emp_id).first()
     if not emp:
         raise HTTPException(404, detail="Не найден")
+    if emp.project_uuid:
+        check_project_access(emp.project_uuid, current_user, db)
     db.delete(emp)
     db.commit()

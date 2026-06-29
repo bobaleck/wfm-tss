@@ -90,12 +90,22 @@ export default function ReportsPage() {
 
   const genStatusSummary = async (begin: string, end: string) => {
     const r = await api.get('/analytics/status-summary', { params: { partner_uuid: activeProject!.customer_uuid, begin, end } })
-    const rows = (r.data.data as any[]).map((d) => [d.login, d.employee_name ?? '', d.status ?? '', d.total_sec != null ? Math.round(d.total_sec / 60) : '', d.share_pct ?? ''])
+    // backend отдаёт login/status/total_duration_sec/events_count (НЕ total_sec/share_pct).
+    // «Минут» берём из total_duration_sec, «Долю» считаем сами — процент времени
+    // статуса от всего времени оператора за период.
+    const data = r.data.data as any[]
+    const loginTotals: Record<string, number> = {}
+    for (const d of data) loginTotals[d.login] = (loginTotals[d.login] || 0) + (d.total_duration_sec || 0)
+    const rows = data.map((d) => {
+      const sec = d.total_duration_sec || 0
+      const lt = loginTotals[d.login] || 0
+      return [d.login, d.employee_name ?? '', d.status ?? '', Math.round(sec / 60), lt > 0 ? Math.round((sec / lt) * 100) : '']
+    })
     download(csvBlob(['Логин', 'ФИО', 'Статус', 'Минут', 'Доля (%)'], rows), `status_summary_${begin}_${end}.csv`)
   }
 
   const genShifts = async (begin: string, end: string) => {
-    const r = await api.get('/schedules/shifts', { params: { date_from: begin, date_to: end } })
+    const r = await api.get('/schedules/shifts', { params: { project_uuid: activeProject!.customer_uuid, date_from: begin, date_to: end } })
     const statuses: Record<string, string> = { planned: 'Запланирована', confirmed: 'Подтверждена', completed: 'Завершена', cancelled: 'Отменена' }
     const rows = (r.data as any[]).map((s) => [
       s.employee_name ?? '', s.shift_date, s.start_time?.slice(11, 16) ?? '', s.end_time?.slice(11, 16) ?? '',
@@ -106,7 +116,7 @@ export default function ReportsPage() {
   }
 
   const genAbsences = async (begin: string, end: string) => {
-    const r = await api.get('/schedules/absences', { params: { date_from: begin, date_to: end } })
+    const r = await api.get('/schedules/absences', { params: { project_uuid: activeProject!.customer_uuid, date_from: begin, date_to: end } })
     const types: Record<string, string> = { vacation: 'Отпуск', sick: 'Больничный', personal: 'Личные', training: 'Обучение', other: 'Другое' }
     const rows = (r.data as any[]).map((a: any) => [
       a.employee_name ?? '', types[a.absence_type] || a.absence_type, a.start_date, a.end_date, a.approved ? 'Да' : 'Нет', a.notes ?? '',

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
 from typing import List, Optional
 from datetime import date
 
@@ -12,7 +13,10 @@ from app.schemas.schedule import (
     ShiftCreate, ShiftUpdate, ShiftOut, ShiftConfirm,
     AbsenceCreate, AbsenceUpdate, AbsenceOut,
 )
-from app.api.deps import get_current_user, require_manager
+from app.api.deps import (
+    get_current_user, require_manager, check_project_access,
+    resolve_project_scope, accessible_project_uuids,
+)
 
 router = APIRouter()
 
@@ -20,12 +24,19 @@ router = APIRouter()
 # ─── Шаблоны расписаний ───────────────────────────────────────────────────────
 
 @router.get("", response_model=List[ScheduleOut])
-def list_schedules(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    return db.query(Schedule).order_by(Schedule.name).all()
+def list_schedules(project_uuid: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    scope = resolve_project_scope(project_uuid, current_user, db)
+    q = db.query(Schedule)
+    if scope is not None:
+        # Шаблоны графиков проекта + общие (project_uuid IS NULL)
+        q = q.filter(or_(Schedule.project_uuid.in_(scope), Schedule.project_uuid.is_(None)))
+    return q.order_by(Schedule.name).all()
 
 
 @router.post("", response_model=ScheduleOut, status_code=201)
-def create_schedule(body: ScheduleCreate, db: Session = Depends(get_db), _=Depends(require_manager)):
+def create_schedule(body: ScheduleCreate, db: Session = Depends(get_db), current_user=Depends(require_manager)):
+    if getattr(body, "project_uuid", None):
+        check_project_access(body.project_uuid, current_user, db)
     s = Schedule(**body.model_dump())
     db.add(s)
     db.commit()
@@ -35,10 +46,12 @@ def create_schedule(body: ScheduleCreate, db: Session = Depends(get_db), _=Depen
 
 @router.put("/{schedule_id}", response_model=ScheduleOut)
 def update_schedule(schedule_id: int, body: ScheduleUpdate,
-                    db: Session = Depends(get_db), _=Depends(require_manager)):
+                    db: Session = Depends(get_db), current_user=Depends(require_manager)):
     s = db.query(Schedule).filter(Schedule.id == schedule_id).first()
     if not s:
         raise HTTPException(404, "Не найдено")
+    if s.project_uuid:
+        check_project_access(s.project_uuid, current_user, db)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(s, k, v)
     db.commit()
@@ -47,10 +60,12 @@ def update_schedule(schedule_id: int, body: ScheduleUpdate,
 
 
 @router.delete("/{schedule_id}", status_code=204)
-def delete_schedule(schedule_id: int, db: Session = Depends(get_db), _=Depends(require_manager)):
+def delete_schedule(schedule_id: int, db: Session = Depends(get_db), current_user=Depends(require_manager)):
     s = db.query(Schedule).filter(Schedule.id == schedule_id).first()
     if not s:
         raise HTTPException(404, "Не найдено")
+    if s.project_uuid:
+        check_project_access(s.project_uuid, current_user, db)
     db.delete(s)
     db.commit()
 
@@ -64,8 +79,9 @@ def list_shifts(
     date_to: Optional[date] = None,
     project_uuid: Optional[str] = None,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    scope = resolve_project_scope(project_uuid, current_user, db)
     q = db.query(Shift).join(Employee)
     if employee_id:
         q = q.filter(Shift.employee_id == employee_id)
@@ -73,8 +89,8 @@ def list_shifts(
         q = q.filter(Shift.shift_date >= date_from)
     if date_to:
         q = q.filter(Shift.shift_date <= date_to)
-    if project_uuid:
-        q = q.filter(Employee.project_uuid == project_uuid)
+    if scope is not None:
+        q = q.filter(Employee.project_uuid.in_(scope))
     shifts = q.order_by(Shift.shift_date, Shift.start_time).all()
     result = []
     for sh in shifts:
@@ -88,7 +104,10 @@ def list_shifts(
 
 
 @router.post("/shifts", response_model=ShiftOut, status_code=201)
-def create_shift(body: ShiftCreate, db: Session = Depends(get_db), _=Depends(require_manager)):
+def create_shift(body: ShiftCreate, db: Session = Depends(get_db), current_user=Depends(require_manager)):
+    emp = db.query(Employee).filter(Employee.id == body.employee_id).first()
+    if emp and emp.project_uuid:
+        check_project_access(emp.project_uuid, current_user, db)
     shift = Shift(**body.model_dump())
     db.add(shift)
     db.commit()
@@ -101,10 +120,12 @@ def create_shift(body: ShiftCreate, db: Session = Depends(get_db), _=Depends(req
 
 @router.put("/shifts/{shift_id}", response_model=ShiftOut)
 def update_shift(shift_id: int, body: ShiftUpdate,
-                 db: Session = Depends(get_db), _=Depends(require_manager)):
+                 db: Session = Depends(get_db), current_user=Depends(require_manager)):
     shift = db.query(Shift).filter(Shift.id == shift_id).first()
     if not shift:
         raise HTTPException(404, "Не найдена")
+    if shift.employee and shift.employee.project_uuid:
+        check_project_access(shift.employee.project_uuid, current_user, db)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(shift, k, v)
     db.commit()
@@ -116,10 +137,12 @@ def update_shift(shift_id: int, body: ShiftUpdate,
 
 
 @router.delete("/shifts/{shift_id}", status_code=204)
-def delete_shift(shift_id: int, db: Session = Depends(get_db), _=Depends(require_manager)):
+def delete_shift(shift_id: int, db: Session = Depends(get_db), current_user=Depends(require_manager)):
     shift = db.query(Shift).filter(Shift.id == shift_id).first()
     if not shift:
         raise HTTPException(404, "Не найдена")
+    if shift.employee and shift.employee.project_uuid:
+        check_project_access(shift.employee.project_uuid, current_user, db)
     db.delete(shift)
     db.commit()
 
@@ -129,12 +152,14 @@ def confirm_shift(
     shift_id: int,
     body: ShiftConfirm,
     db: Session = Depends(get_db),
-    _=Depends(require_manager),
+    current_user=Depends(require_manager),
 ):
     """Подтвердить смену и/или указать фактически отработанные часы."""
     shift = db.query(Shift).filter(Shift.id == shift_id).first()
     if not shift:
         raise HTTPException(404, "Смена не найдена")
+    if shift.employee and shift.employee.project_uuid:
+        check_project_access(shift.employee.project_uuid, current_user, db)
     shift.actual_start_time = body.actual_start_time or shift.start_time
     shift.actual_end_time = body.actual_end_time or shift.end_time
     shift.actual_hours_worked = body.actual_hours_worked
@@ -153,7 +178,7 @@ def confirm_shift(
 def reconcile_shifts(
     reconcile_date: Optional[date] = None,
     db: Session = Depends(get_db),
-    _=Depends(require_manager),
+    current_user=Depends(require_manager),
 ):
     """
     Сверка плановых смен с данными Naumen за указанную дату (по умолчанию — вчера).
@@ -171,10 +196,16 @@ def reconcile_shifts(
         "user": s.db_user, "password": s.db_password, "port": s.db_port,
     } if s and s.db_host else None
 
-    shifts = db.query(Shift).join(Employee).filter(
+    # Проектная изоляция: сверяем только смены доступных пользователю проектов
+    # (Админ/Аналитик — все). Менеджер не может пересчитать чужие проекты.
+    scope = accessible_project_uuids(current_user, db)
+    sq = db.query(Shift).join(Employee).filter(
         Shift.shift_date == target_date,
         Shift.status.in_(["planned", "confirmed"]),
-    ).all()
+    )
+    if scope is not None:
+        sq = sq.filter(Employee.project_uuid.in_(scope))
+    shifts = sq.all()
 
     updated, flagged, skipped = 0, 0, 0
     for shift in shifts:
@@ -224,7 +255,7 @@ def export_shifts_xlsx(
     date_from: date = Query(...),
     date_to: date = Query(...),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Выгрузка графика смен в Excel по шаблону «График работы.xlsx»:
     строки — сотрудники (сгруппированы по команде), столбцы — по 2 на каждый день
@@ -245,16 +276,17 @@ def export_shifts_xlsx(
         days.append(d)
         d += timedelta(days=1)
 
+    scope = resolve_project_scope(project_uuid, current_user, db)
     sq = db.query(Shift).join(Employee).filter(
         Shift.shift_date >= date_from, Shift.shift_date <= date_to,
     )
-    if project_uuid:
-        sq = sq.filter(Employee.project_uuid == project_uuid)
+    if scope is not None:
+        sq = sq.filter(Employee.project_uuid.in_(scope))
     by_emp_date = {(sh.employee_id, sh.shift_date): sh for sh in sq.all()}
 
     eq = db.query(Employee)
-    if project_uuid:
-        eq = eq.filter(Employee.project_uuid == project_uuid)
+    if scope is not None:
+        eq = eq.filter(Employee.project_uuid.in_(scope))
     employees = [e for e in eq.all() if e.employment_status != "fired"]
 
     def team_name(e):
@@ -354,10 +386,14 @@ def list_absences(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     absence_type: Optional[str] = None,
+    project_uuid: Optional[str] = None,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
+    scope = resolve_project_scope(project_uuid, current_user, db)
     q = db.query(Absence)
+    if scope is not None:
+        q = q.join(Employee).filter(Employee.project_uuid.in_(scope))
     if employee_id:
         q = q.filter(Absence.employee_id == employee_id)
     if date_from:
@@ -376,7 +412,10 @@ def list_absences(
 
 
 @router.post("/absences", response_model=AbsenceOut, status_code=201)
-def create_absence(body: AbsenceCreate, db: Session = Depends(get_db), _=Depends(require_manager)):
+def create_absence(body: AbsenceCreate, db: Session = Depends(get_db), current_user=Depends(require_manager)):
+    emp = db.query(Employee).filter(Employee.id == body.employee_id).first()
+    if emp and emp.project_uuid:
+        check_project_access(emp.project_uuid, current_user, db)
     ab = Absence(**body.model_dump())
     db.add(ab)
     db.commit()
@@ -388,10 +427,12 @@ def create_absence(body: AbsenceCreate, db: Session = Depends(get_db), _=Depends
 
 @router.put("/absences/{absence_id}", response_model=AbsenceOut)
 def update_absence(absence_id: int, body: AbsenceUpdate,
-                   db: Session = Depends(get_db), _=Depends(require_manager)):
+                   db: Session = Depends(get_db), current_user=Depends(require_manager)):
     ab = db.query(Absence).filter(Absence.id == absence_id).first()
     if not ab:
         raise HTTPException(404, "Не найдено")
+    if ab.employee and ab.employee.project_uuid:
+        check_project_access(ab.employee.project_uuid, current_user, db)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(ab, k, v)
     db.commit()
@@ -402,9 +443,11 @@ def update_absence(absence_id: int, body: AbsenceUpdate,
 
 
 @router.delete("/absences/{absence_id}", status_code=204)
-def delete_absence(absence_id: int, db: Session = Depends(get_db), _=Depends(require_manager)):
+def delete_absence(absence_id: int, db: Session = Depends(get_db), current_user=Depends(require_manager)):
     ab = db.query(Absence).filter(Absence.id == absence_id).first()
     if not ab:
         raise HTTPException(404, "Не найдено")
+    if ab.employee and ab.employee.project_uuid:
+        check_project_access(ab.employee.project_uuid, current_user, db)
     db.delete(ab)
     db.commit()

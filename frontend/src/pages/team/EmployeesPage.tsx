@@ -39,13 +39,13 @@ function EmployeeForm({ employee, onClose }: { employee?: Employee | null; onClo
   const [error, setError] = useState('')
 
   const { data: teams } = useQuery({
-    queryKey: ['teams'],
-    queryFn: () => api.get('/teams').then((r) => r.data as any[]),
+    queryKey: ['teams', activeProject?.customer_uuid],
+    queryFn: () => api.get('/teams', { params: { project_uuid: activeProject?.customer_uuid } }).then((r) => r.data as any[]),
   })
 
   const { data: schedules } = useQuery({
-    queryKey: ['schedules'],
-    queryFn: () => api.get('/schedules').then((r) => r.data as any[]),
+    queryKey: ['schedules', activeProject?.customer_uuid],
+    queryFn: () => api.get('/schedules', { params: { project_uuid: activeProject?.customer_uuid } }).then((r) => r.data as any[]),
   })
 
   const mutation = useMutation({

@@ -10,11 +10,13 @@ import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import EmptyState from '@/components/common/EmptyState'
 import DatePicker from '@/components/common/DatePicker'
+import { useProjectStore } from '@/store/project'
 import { format, subDays } from 'date-fns'
 
 function AbsenceForm({ absence, onClose }: { absence?: Absence | null; onClose: () => void }) {
   const qc = useQueryClient()
-  const { data: employees } = useQuery({ queryKey: ['employees'], queryFn: () => api.get('/employees').then((r) => r.data as any[]) })
+  const { activeProject } = useProjectStore()
+  const { data: employees } = useQuery({ queryKey: ['employees', activeProject?.customer_uuid], queryFn: () => api.get('/employees', { params: { project_uuid: activeProject?.customer_uuid, limit: 1000 } }).then((r) => r.data as any[]) })
   const [form, setForm] = useState({
     employee_id: absence?.employee_id ?? '' as any,
     absence_type: absence?.absence_type ?? 'vacation',
@@ -61,6 +63,7 @@ function AbsenceForm({ absence, onClose }: { absence?: Absence | null; onClose: 
 }
 
 export default function AbsencesPage() {
+  const { activeProject } = useProjectStore()
   const [showForm, setShowForm] = useState(false)
   const [editAbsence, setEditAbsence] = useState<Absence | null>(null)
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
@@ -68,8 +71,8 @@ export default function AbsencesPage() {
   const qc = useQueryClient()
 
   const { data, isLoading } = useQuery({
-    queryKey: ['absences', dateFrom, dateTo],
-    queryFn: () => api.get('/schedules/absences', { params: { date_from: dateFrom, date_to: dateTo } }).then((r) => r.data as Absence[]),
+    queryKey: ['absences', activeProject?.customer_uuid, dateFrom, dateTo],
+    queryFn: () => api.get('/schedules/absences', { params: { project_uuid: activeProject?.customer_uuid, date_from: dateFrom, date_to: dateTo } }).then((r) => r.data as Absence[]),
   })
   const deleteMutation = useMutation({ mutationFn: (id: number) => api.delete(`/schedules/absences/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['absences'] }) })
 

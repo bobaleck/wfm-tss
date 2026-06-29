@@ -111,7 +111,11 @@ After=network.target postgresql.service
 User=wfm
 WorkingDirectory=/opt/wfm/app/backend
 Environment=PATH=/opt/wfm/app/backend/venv/bin
-ExecStart=/opt/wfm/app/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+# ВАЖНО: ровно ОДИН воркер. Приложение хранит состояние в памяти процесса
+# (статусы фоновой синхронизации _sync_jobs, кэши очередей/линий, APScheduler
+# ежедневной сверки). При 2+ воркерах статус «Синхронизация» будет теряться,
+# а сверка задвоится. Масштабировать — не воркерами, а вертикально.
+ExecStart=/opt/wfm/app/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=always
 RestartSec=5
 StandardOutput=journal

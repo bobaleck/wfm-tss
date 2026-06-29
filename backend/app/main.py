@@ -33,6 +33,7 @@ _scheduler = BackgroundScheduler(timezone="Europe/Moscow")
 def startup():
     init_db()
     _seed_admin()
+    _assign_orphans_to_x5()
     _scheduler.add_job(_run_daily_reconciliation, "cron", hour=7, minute=0)
     _scheduler.start()
 
@@ -119,6 +120,42 @@ def _seed_admin():
             db.add(admin)
             db.commit()
             print("[OK] Admin created: login=admin password=admin123")
+    finally:
+        db.close()
+
+
+def _assign_orphans_to_x5():
+    """Полная изоляция проектов: сотрудники/команды без проекта привязываются к
+    проекту «X5» (по требованию — «всё, что некуда определить, — в X5»).
+    Идемпотентно: трогает только записи с пустым project_uuid. Если проект с
+    названием, содержащим «X5», не найден — миграция пропускается."""
+    from sqlalchemy import or_
+    from app.models.employee import Employee
+    from app.models.team import Team
+    from app.models.audit import TrackedProject
+    db = SessionLocal()
+    try:
+        x5 = (db.query(TrackedProject)
+              .filter(TrackedProject.customer_name.ilike("%X5%"))
+              .order_by(TrackedProject.id)
+              .first())
+        if not x5:
+            return
+        uuid = x5.customer_uuid
+        emp_n = db.query(Employee).filter(
+            or_(Employee.project_uuid.is_(None), Employee.project_uuid == "")
+        ).update({Employee.project_uuid: uuid}, synchronize_session=False)
+        team_n = db.query(Team).filter(
+            or_(Team.project_uuid.is_(None), Team.project_uuid == "")
+        ).update({Team.project_uuid: uuid}, synchronize_session=False)
+        if emp_n or team_n:
+            db.commit()
+            print(f"[OK] Orphans -> X5 ({x5.customer_name}): employees={emp_n}, teams={team_n}")
+        else:
+            db.rollback()
+    except Exception as e:
+        db.rollback()
+        print(f"[WARN] orphan->X5 migration skipped: {e}")
     finally:
         db.close()
 

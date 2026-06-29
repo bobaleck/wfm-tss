@@ -356,7 +356,7 @@ export default function StatusTimeline({
   const { data, isLoading } = useQuery({
     queryKey: ['timeline', login, workDate ?? `window-${hours}`],
     queryFn: () =>
-      api.get('/analytics/operator-timeline', { params: workDate ? { login, work_date: workDate } : { login, hours } })
+      api.get('/analytics/operator-timeline', { params: workDate ? { login, work_date: workDate, partner_uuid: partnerUuid } : { login, hours, partner_uuid: partnerUuid } })
          .then((r) => r.data.data as TimelineEvent[]),
     staleTime: hours ? 60 * 1000 : 5 * 60 * 1000,
     refetchInterval: hours ? 60 * 1000 : undefined,

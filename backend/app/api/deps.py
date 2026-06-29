@@ -12,11 +12,16 @@ bearer = HTTPBearer(auto_error=False)
 # Roles ordered by privilege level (highest first)
 ROLE_HIERARCHY = ['admin', 'project_manager', 'analyst', 'hr', 'customer', 'viewer']
 
-# Roles that have access to ALL projects (no project-level filter)
-ALL_PROJECTS_ROLES = {'admin', 'analyst', 'hr', 'viewer'}
+# Roles that have access to ALL projects (no project-level filter).
+# По требованию: полный доступ ко всем проектам — только Админ и Аналитик.
+# Все остальные роли (project_manager, hr, customer, viewer) видят только
+# назначенные им проекты (через user_projects). Суперпользователь — тоже всё.
+ALL_PROJECTS_ROLES = {'admin', 'analyst'}
 
-# Roles that see only their assigned projects
-PROJECT_SCOPED_ROLES = {'project_manager', 'customer'}
+
+def is_all_projects(user: User) -> bool:
+    """True — пользователь видит все проекты (Админ/Аналитик/суперпользователь)."""
+    return bool(user.is_superuser) or user.role in ALL_PROJECTS_ROLES
 
 
 def get_current_user(
@@ -62,21 +67,43 @@ def require_hr(current_user: User = Depends(get_current_user)) -> User:
 
 
 def check_project_access(partner_uuid: str, current_user: User, db: Session) -> None:
-    """Raise 403 if current_user has no access to partner_uuid."""
-    if current_user.is_superuser or current_user.role in ALL_PROJECTS_ROLES:
+    """Raise 403 if current_user has no access to partner_uuid.
+    Default-deny: любой, кто не Админ/Аналитик/суперпользователь, обязан иметь
+    явную привязку в user_projects к этому проекту."""
+    if is_all_projects(current_user):
         return
-    if current_user.role in PROJECT_SCOPED_ROLES:
-        assigned = db.query(UserProject).filter(
-            UserProject.user_id == current_user.id,
-            UserProject.project_uuid == partner_uuid,
-        ).first()
-        if not assigned:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к проекту")
+    assigned = db.query(UserProject).filter(
+        UserProject.user_id == current_user.id,
+        UserProject.project_uuid == partner_uuid,
+    ).first()
+    if not assigned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к проекту")
 
 
 def get_user_project_uuids(user: User, db: Session) -> list[str] | None:
     """Returns list of project UUIDs the user can access, or None meaning 'all projects'."""
-    if user.is_superuser or user.role in ALL_PROJECTS_ROLES:
+    if is_all_projects(user):
         return None  # all projects
     rows = db.query(UserProject).filter(UserProject.user_id == user.id).all()
     return [r.project_uuid for r in rows]
+
+
+def accessible_project_uuids(user: User, db: Session) -> set[str] | None:
+    """Множество доступных проектов; None — доступны все (Админ/Аналитик)."""
+    uuids = get_user_project_uuids(user, db)
+    return None if uuids is None else set(uuids)
+
+
+def resolve_project_scope(requested_uuid: str | None, user: User, db: Session) -> set[str] | None:
+    """Единый помощник проектной изоляции для списков.
+
+    Возвращает множество project_uuid, которым НАДО ограничить выборку, либо
+    None — ограничивать не нужно (пользователь видит все проекты).
+    Если запрошен конкретный проект, к которому нет доступа, — 403.
+    """
+    acc = accessible_project_uuids(user, db)  # None = все
+    if requested_uuid:
+        if acc is not None and requested_uuid not in acc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к проекту")
+        return {requested_uuid}
+    return acc

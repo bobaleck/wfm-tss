@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import List, Optional
 
 from app.core.database import get_db
@@ -24,16 +25,18 @@ DEFAULT_SKILLS = [
 from app.models.skill import Skill
 from app.models.employee import EmployeeSkill
 from app.schemas.skill import SkillCreate, SkillUpdate, SkillOut
-from app.api.deps import get_current_user, require_manager
+from app.api.deps import get_current_user, require_manager, check_project_access, resolve_project_scope
 
 router = APIRouter()
 
 
 @router.get("", response_model=List[SkillOut])
-def list_skills(project_uuid: Optional[str] = None, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_skills(project_uuid: Optional[str] = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    scope = resolve_project_scope(project_uuid, current_user, db)
     q = db.query(Skill)
-    if project_uuid:
-        q = q.filter(Skill.project_uuid == project_uuid)
+    if scope is not None:
+        # Видны навыки проекта + общие (глобальный справочник, project_uuid IS NULL)
+        q = q.filter(or_(Skill.project_uuid.in_(scope), Skill.project_uuid.is_(None)))
     skills = q.order_by(Skill.name).all()
     result = []
     for s in skills:
@@ -44,7 +47,9 @@ def list_skills(project_uuid: Optional[str] = None, db: Session = Depends(get_db
 
 
 @router.post("", response_model=SkillOut, status_code=201)
-def create_skill(body: SkillCreate, db: Session = Depends(get_db), _=Depends(require_manager)):
+def create_skill(body: SkillCreate, db: Session = Depends(get_db), current_user=Depends(require_manager)):
+    if getattr(body, "project_uuid", None):
+        check_project_access(body.project_uuid, current_user, db)
     skill = Skill(**body.model_dump())
     db.add(skill)
     db.commit()
@@ -55,20 +60,24 @@ def create_skill(body: SkillCreate, db: Session = Depends(get_db), _=Depends(req
 
 
 @router.get("/{skill_id}", response_model=SkillOut)
-def get_skill(skill_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def get_skill(skill_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     skill = db.query(Skill).filter(Skill.id == skill_id).first()
     if not skill:
         raise HTTPException(404, detail="Не найден")
+    if skill.project_uuid:
+        check_project_access(skill.project_uuid, current_user, db)
     out = SkillOut.model_validate(skill).model_dump()
     out["employee_count"] = db.query(EmployeeSkill).filter(EmployeeSkill.skill_id == skill_id).count()
     return out
 
 
 @router.put("/{skill_id}", response_model=SkillOut)
-def update_skill(skill_id: int, body: SkillUpdate, db: Session = Depends(get_db), _=Depends(require_manager)):
+def update_skill(skill_id: int, body: SkillUpdate, db: Session = Depends(get_db), current_user=Depends(require_manager)):
     skill = db.query(Skill).filter(Skill.id == skill_id).first()
     if not skill:
         raise HTTPException(404, detail="Не найден")
+    if skill.project_uuid:
+        check_project_access(skill.project_uuid, current_user, db)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(skill, k, v)
     db.commit()
@@ -79,10 +88,12 @@ def update_skill(skill_id: int, body: SkillUpdate, db: Session = Depends(get_db)
 
 
 @router.delete("/{skill_id}", status_code=204)
-def delete_skill(skill_id: int, db: Session = Depends(get_db), _=Depends(require_manager)):
+def delete_skill(skill_id: int, db: Session = Depends(get_db), current_user=Depends(require_manager)):
     skill = db.query(Skill).filter(Skill.id == skill_id).first()
     if not skill:
         raise HTTPException(404, detail="Не найден")
+    if skill.project_uuid:
+        check_project_access(skill.project_uuid, current_user, db)
     db.delete(skill)
     db.commit()
 

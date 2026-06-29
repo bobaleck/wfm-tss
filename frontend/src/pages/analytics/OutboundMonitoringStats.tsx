@@ -28,17 +28,20 @@ function SortTh({ label, k, sort, dir, onSort }: { label: string; k: string; sor
 
 // «Мониторинг → Статистика» для линии «Исход»: операторы обзвона и результаты
 // за окно последних N минут. Окно — ползунок (как у входящей статистики).
-// externalQueues принимается для совместимости (фильтр линий применяется к доске).
-export default function OutboundMonitoringStats({ externalQueues: _ }: { externalQueues?: Set<string> }) {
+// externalQueues — выбранные в фильтре линии/подпроекты: пробрасываем их в
+// запрос, чтобы статистика соответствовала выбранным исходящим подпроектам.
+export default function OutboundMonitoringStats({ externalQueues }: { externalQueues?: Set<string> }) {
   const { activeProject } = useProjectStore()
   const [sliderVal, setSliderVal] = useState(1440)
   const [windowMin, setWindowMin] = useState(1440)
   const [oSort, setOSort] = useState<string>('attempts'); const [oDir, setODir] = useState<'asc' | 'desc'>('desc')
 
+  const queueList = externalQueues && externalQueues.size > 0 ? [...externalQueues] : undefined
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['recent-stats-outbound', activeProject?.customer_uuid, windowMin],
+    queryKey: ['recent-stats-outbound', activeProject?.customer_uuid, windowMin, queueList?.join('|')],
     queryFn: () => api.get('/analytics/recent-stats-outbound', {
-      params: { partner_uuid: activeProject!.customer_uuid, window_min: windowMin },
+      params: { partner_uuid: activeProject!.customer_uuid, window_min: windowMin, queues: queueList },
+      paramsSerializer: { indexes: null },
     }).then((r) => r.data as { by_operator: OpRow[]; by_result: ResRow[] }),
     enabled: !!activeProject,
     refetchInterval: 5 * 60 * 1000,

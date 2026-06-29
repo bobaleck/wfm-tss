@@ -651,8 +651,8 @@ export default function ShiftsPage() {
   }
 
   const { data, isLoading } = useQuery({
-    queryKey: ['shifts', dateFrom, dateTo],
-    queryFn: () => api.get('/schedules/shifts', { params: { date_from: dateFrom, date_to: dateTo } }).then((r) => r.data as Shift[]),
+    queryKey: ['shifts', activeProject?.customer_uuid, dateFrom, dateTo],
+    queryFn: () => api.get('/schedules/shifts', { params: { project_uuid: activeProject?.customer_uuid, date_from: dateFrom, date_to: dateTo } }).then((r) => r.data as Shift[]),
   })
 
   const deleteMutation = useMutation({

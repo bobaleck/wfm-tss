@@ -996,16 +996,36 @@ def get_current_online_operators(logins: list, overrides: dict = None) -> list[d
     return _execute(query, {"logins": logins}, overrides)
 
 
-def get_operator_day_seconds(login: str, work_date: str, overrides: dict = None) -> float:
-    """Суммарное время в статусах (в секундах) для оператора за указанную дату."""
+def get_operator_day_seconds(login: str, work_date: str, overrides: dict = None,
+                             offline_statuses: list = None) -> float:
+    """Фактически отработанное время оператора за дату (в секундах) — для сверки
+    смен. По канону WFM_instruction_pack длительность статуса считаем через
+    LEAD(entered) с обрезкой по суткам (а не по полю duration), и НЕ засчитываем
+    офлайн/выход из системы (иначе время после логаута раздувало бы «отработку»).
+    offline_statuses — список офлайн-статусов проекта; по умолчанию стандартные."""
+    from app.services.status_classification import STANDARD_OFFLINE
+    offline = [s.lower() for s in (offline_statuses if offline_statuses is not None else list(STANDARD_OFFLINE))]
     query = """
-    SELECT COALESCE(SUM(duration), 0) AS total_sec
-    FROM status_changes
-    WHERE login = %(login)s
-      AND entered >= %(work_date)s::timestamp
-      AND entered <  (%(work_date)s::date + INTERVAL '1 day')::timestamp
+    WITH events AS (
+        SELECT
+            sc.status,
+            sc.entered,
+            LEAD(sc.entered) OVER (PARTITION BY sc.login ORDER BY sc.entered) AS next_entered
+        FROM status_changes sc
+        WHERE sc.login = %(login)s
+          AND sc.entered >= %(work_date)s::timestamp
+          AND sc.entered <  (%(work_date)s::date + INTERVAL '1 day')::timestamp
+    )
+    SELECT COALESCE(SUM(
+        GREATEST(0, LEAST(
+            COALESCE(EXTRACT(EPOCH FROM (next_entered - entered)), 0),
+            EXTRACT(EPOCH FROM (DATE_TRUNC('day', entered) + INTERVAL '1 day' - entered))
+        ))
+    ), 0) AS total_sec
+    FROM events
+    WHERE lower(status) <> ALL(%(offline)s)
     """
-    result = _execute(query, {"login": login, "work_date": work_date}, overrides)
+    result = _execute(query, {"login": login, "work_date": work_date, "offline": offline}, overrides)
     return float(result[0]["total_sec"]) if result else 0.0
 
 
@@ -1091,11 +1111,15 @@ def get_current_operators_outbound(partner_uuid: str, overrides: dict = None,
     return _execute(query, {"partner_uuid": partner_uuid, "work": work, "offline": offline}, overrides)
 
 
-def get_recent_stats_outbound(partner_uuid: str, window_min: int, overrides: dict = None) -> dict:
+def get_recent_stats_outbound(partner_uuid: str, window_min: int, overrides: dict = None,
+                              queue_names: list = None) -> dict:
     """Live-статистика исходящего обзвона за последние window_min минут: по
     операторам (попытки/контакты/ср.разговор) и по результату попыток. Контакт =
-    реальный разговор speaking_time > 10 c. Времена dosm — в МС."""
-    q_op = """
+    реальный разговор speaking_time > 10 c. Времена dosm — в МС.
+    queue_names — фильтр по выбранным исходящим подпроектам (по названию,
+    ocp.title); если задан — статистика только по этим линиям."""
+    flt = "AND ocp.title = ANY(%(qn)s)" if queue_names else ""
+    q_op = f"""
     SELECT
         d.login AS login,
         em.title AS employee_name,
@@ -1108,20 +1132,24 @@ def get_recent_stats_outbound(partner_uuid: str, window_min: int, overrides: dic
     WHERE ocp.partneruuid = %(p)s
       AND d.attempt_start >= NOW() - make_interval(mins => %(w)s)
       AND d.login IS NOT NULL
+      {flt}
     GROUP BY d.login, em.title
     ORDER BY attempts DESC
     """
-    q_res = """
+    q_res = f"""
     SELECT COALESCE(d.attempt_result, '—') AS result, COUNT(*) AS cnt,
            COUNT(*) FILTER (WHERE d.speaking_time > 10000) AS contacts
     FROM detail_outbound_sessions_ms d
     JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
     WHERE ocp.partneruuid = %(p)s
       AND d.attempt_start >= NOW() - make_interval(mins => %(w)s)
+      {flt}
     GROUP BY d.attempt_result
     ORDER BY cnt DESC
     """
     params = {"p": partner_uuid, "w": window_min}
+    if queue_names:
+        params["qn"] = list(queue_names)
     res = _execute_multi([(q_op, params), (q_res, params)], overrides)
     return {"by_operator": res[0], "by_result": res[1]}
 

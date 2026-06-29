@@ -5,7 +5,7 @@ from typing import Optional, List
 
 from app.core.database import get_db
 from app.models.audit import QueueSetting
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import get_current_user, require_admin, check_project_access
 
 router = APIRouter()
 
@@ -21,7 +21,8 @@ class QueueSettingIn(BaseModel):
 
 
 @router.get("/{partner_uuid}")
-def get_queue_settings(partner_uuid: str, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def get_queue_settings(partner_uuid: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    check_project_access(partner_uuid, current_user, db)
     rows = db.query(QueueSetting).filter(QueueSetting.partner_uuid == partner_uuid).all()
     return [
         {
@@ -42,8 +43,9 @@ def save_queue_settings(
     partner_uuid: str,
     items: List[QueueSettingIn],
     db: Session = Depends(get_db),
-    _=Depends(require_admin),
+    current_user=Depends(require_admin),
 ):
+    check_project_access(partner_uuid, current_user, db)
     for item in items:
         existing = db.query(QueueSetting).filter(
             QueueSetting.partner_uuid == partner_uuid,
@@ -79,8 +81,9 @@ def delete_queue_setting(
     partner_uuid: str,
     queue_name: str,
     db: Session = Depends(get_db),
-    _=Depends(require_admin),
+    current_user=Depends(require_admin),
 ):
+    check_project_access(partner_uuid, current_user, db)
     row = db.query(QueueSetting).filter(
         QueueSetting.partner_uuid == partner_uuid,
         QueueSetting.queue_name == queue_name,

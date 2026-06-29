@@ -7,6 +7,7 @@ import PageHeader from '@/components/common/PageHeader'
 import { PageSpinner } from '@/components/ui/Spinner'
 import Modal from '@/components/ui/Modal'
 import EmptyState from '@/components/common/EmptyState'
+import { useProjectStore } from '@/store/project'
 
 const DAYS = [
   { key: '1', label: 'Пн' }, { key: '2', label: 'Вт' }, { key: '3', label: 'Ср' },
@@ -29,6 +30,7 @@ function DaysBadges({ days }: { days: string }) {
 
 function ScheduleForm({ schedule, onClose }: { schedule?: Schedule | null; onClose: () => void }) {
   const qc = useQueryClient()
+  const { activeProject } = useProjectStore()
   const [form, setForm] = useState({
     name: schedule?.name ?? '',
     work_start: schedule?.work_start ?? '09:00',
@@ -44,7 +46,7 @@ function ScheduleForm({ schedule, onClose }: { schedule?: Schedule | null; onClo
   const [error, setError] = useState('')
 
   const mutation = useMutation({
-    mutationFn: (d: any) => schedule ? api.put(`/schedules/${schedule.id}`, d) : api.post('/schedules', d),
+    mutationFn: (d: any) => schedule ? api.put(`/schedules/${schedule.id}`, d) : api.post('/schedules', { ...d, project_uuid: activeProject?.customer_uuid }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['schedules'] }); onClose() },
     onError: (e: any) => setError(e.response?.data?.detail || 'Ошибка'),
   })
@@ -112,10 +114,11 @@ function ScheduleForm({ schedule, onClose }: { schedule?: Schedule | null; onClo
 }
 
 export default function SchedulesPage() {
+  const { activeProject } = useProjectStore()
   const [showForm, setShowForm] = useState(false)
   const [editSchedule, setEditSchedule] = useState<Schedule | null>(null)
   const qc = useQueryClient()
-  const { data, isLoading } = useQuery({ queryKey: ['schedules'], queryFn: () => api.get('/schedules').then((r) => r.data as Schedule[]) })
+  const { data, isLoading } = useQuery({ queryKey: ['schedules', activeProject?.customer_uuid], queryFn: () => api.get('/schedules', { params: { project_uuid: activeProject?.customer_uuid } }).then((r) => r.data as Schedule[]) })
   const deleteMutation = useMutation({ mutationFn: (id: number) => api.delete(`/schedules/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }) })
 
   return (

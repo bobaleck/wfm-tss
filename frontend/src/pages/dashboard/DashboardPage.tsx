@@ -48,10 +48,11 @@ export default function DashboardPage() {
   })
 
   const shiftsQuery = useQuery({
-    queryKey: ['shifts-dashboard', todayStr],
+    queryKey: ['shifts-dashboard', activeProject?.customer_uuid, todayStr],
     queryFn: () =>
-      api.get('/schedules/shifts', { params: { date_from: format(subDays(today, 7), 'yyyy-MM-dd'), date_to: format(subDays(today, -1), 'yyyy-MM-dd') } })
+      api.get('/schedules/shifts', { params: { project_uuid: activeProject?.customer_uuid, date_from: format(subDays(today, 7), 'yyyy-MM-dd'), date_to: format(subDays(today, -1), 'yyyy-MM-dd') } })
         .then((r) => r.data as any[]),
+    enabled: !!activeProject,
   })
 
   const queuesQuery = useQuery({
@@ -364,12 +365,14 @@ export default function DashboardPage() {
                     {displaySl !== null && (
                       <div
                         className="h-full rounded-full transition-all"
-                        style={{ width: `${Math.min(displaySl, 100)}%`, backgroundColor: slBarColor(displaySl, targetSl) }}
+                        style={{ width: `${Math.min(displaySl, 100)}%`, backgroundColor: actualSl !== null ? slBarColor(displaySl, targetSl) : '#cbd5e1' }}
                       />
                     )}
                   </div>
-                  <span className={`text-sm font-semibold w-14 text-right flex-shrink-0 ${displaySl === null ? 'text-slate-300' : slColor(displaySl, targetSl)}`}>
-                    {displaySl !== null ? `${displaySl}%` : '—'}
+                  <span
+                    title={actualSl === null ? 'Целевой SL (фактический SL на дашборде не рассчитывается; «*» = цель)' : 'Фактический SL'}
+                    className={`text-sm font-semibold w-14 text-right flex-shrink-0 ${displaySl === null ? 'text-slate-300' : actualSl === null ? 'text-slate-400' : slColor(displaySl, targetSl)}`}>
+                    {displaySl !== null ? (actualSl !== null ? `${displaySl}%` : `${displaySl}%*`) : '—'}
                   </span>
                 </div>
               )

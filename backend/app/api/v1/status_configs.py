@@ -5,7 +5,7 @@ from typing import Optional
 
 from app.core.database import get_db
 from app.models.audit import StatusConfig, IntegrationSettings
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import get_current_user, require_admin, check_project_access
 from app.services.status_classification import is_standard, standard_group
 import app.services.naumen_db as naumen
 
@@ -31,7 +31,8 @@ class StatusConfigBody(BaseModel):
 
 
 @router.get("/{partner_uuid}")
-def list_configs(partner_uuid: str, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_configs(partner_uuid: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    check_project_access(partner_uuid, current_user, db)
     items = db.query(StatusConfig).filter(StatusConfig.project_uuid == partner_uuid).order_by(StatusConfig.status_name).all()
     return [
         {"status_name": i.status_name, "classification": i.classification, "label": i.label}
@@ -40,11 +41,12 @@ def list_configs(partner_uuid: str, db: Session = Depends(get_db), _=Depends(get
 
 
 @router.get("/{partner_uuid}/discover")
-def discover_statuses(partner_uuid: str, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def discover_statuses(partner_uuid: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Тянет из Naumen все статусы, реально встречавшиеся у операторов проекта,
     помечает стандартные (классификация задана системой) и нестандартные
     (требуют настройки — наименование + к чему относить), подмешивая уже
     сохранённые настройки этого проекта."""
+    check_project_access(partner_uuid, current_user, db)
     try:
         statuses = naumen.get_distinct_statuses_for_project(partner_uuid, _build_overrides(db))
     except Exception as e:
@@ -82,8 +84,9 @@ def upsert_config(
     status_name: str,
     body: StatusConfigBody,
     db: Session = Depends(get_db),
-    _=Depends(require_admin),
+    current_user=Depends(require_admin),
 ):
+    check_project_access(partner_uuid, current_user, db)
     if body.classification not in ("work", "pause", "offline"):
         raise HTTPException(400, detail="classification должен быть work | pause | offline")
     cfg = db.query(StatusConfig).filter(
@@ -110,8 +113,9 @@ def delete_config(
     partner_uuid: str,
     status_name: str,
     db: Session = Depends(get_db),
-    _=Depends(require_admin),
+    current_user=Depends(require_admin),
 ):
+    check_project_access(partner_uuid, current_user, db)
     cfg = db.query(StatusConfig).filter(
         StatusConfig.project_uuid == partner_uuid,
         StatusConfig.status_name == status_name,
