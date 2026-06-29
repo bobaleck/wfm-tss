@@ -22,6 +22,10 @@ export interface Project {
   is_manual?: boolean
   has_inbound?: boolean
   has_outbound?: boolean
+  // Время работы проекта (окно суток HH:MM) — относительно него заполняется
+  // кружок покрытия смен в календаре. По умолчанию 00:00–24:00 (круглосуточно).
+  work_start?: string
+  work_end?: string
 }
 
 export type EmploymentStatus = 'new' | 'active' | 'fired'

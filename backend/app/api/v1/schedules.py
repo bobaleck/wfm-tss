@@ -28,8 +28,8 @@ def list_schedules(project_uuid: Optional[str] = None, db: Session = Depends(get
     scope = resolve_project_scope(project_uuid, current_user, db)
     q = db.query(Schedule)
     if scope is not None:
-        # Шаблоны графиков проекта + общие (project_uuid IS NULL)
-        q = q.filter(or_(Schedule.project_uuid.in_(scope), Schedule.project_uuid.is_(None)))
+        # Графики строго проектные — индивидуальны для каждого проекта.
+        q = q.filter(Schedule.project_uuid.in_(scope))
     return q.order_by(Schedule.name).all()
 
 

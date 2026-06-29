@@ -46,6 +46,10 @@ class TrackedProject(Base):
     # какие разделы аналитики показываются («Аналитика (Вход)» / «Аналитика (Исход)»).
     has_inbound = Column(Boolean, default=True)
     has_outbound = Column(Boolean, default=False)
+    # Время работы проекта (окно суток) — относительно него заполняется кружок
+    # покрытия смен в календаре. По умолчанию круглосуточно (00:00–24:00).
+    work_start = Column(String(10), default="00:00")
+    work_end = Column(String(10), default="24:00")
     added_at = Column(DateTime, server_default=func.now())
 
 

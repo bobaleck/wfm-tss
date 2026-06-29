@@ -50,6 +50,8 @@ class TrackedProjectIn(BaseModel):
     is_manual: Optional[bool] = False
     has_inbound: Optional[bool] = None
     has_outbound: Optional[bool] = None
+    work_start: Optional[str] = None
+    work_end: Optional[str] = None
 
 
 def _build_overrides(db: Session) -> Optional[dict]:
@@ -155,6 +157,8 @@ def list_tracked_projects(db: Session = Depends(get_db), current_user: User = De
             "is_manual": bool(p.is_manual),
             "has_inbound": bool(p.has_inbound) if p.has_inbound is not None else True,
             "has_outbound": bool(p.has_outbound) if p.has_outbound is not None else False,
+            "work_start": p.work_start or "00:00",
+            "work_end": p.work_end or "24:00",
             "active_projects_count": 0,
             "active_incoming_count": 0,
             "active_outcoming_count": 0,
@@ -180,6 +184,10 @@ def update_tracked_project(uuid: str, body: TrackedProjectIn, db: Session = Depe
         project.has_inbound = body.has_inbound
     if body.has_outbound is not None:
         project.has_outbound = body.has_outbound
+    if body.work_start is not None:
+        project.work_start = body.work_start
+    if body.work_end is not None:
+        project.work_end = body.work_end
     db.commit()
     return {"ok": True}
 
@@ -200,6 +208,8 @@ def add_tracked_project(body: TrackedProjectIn, db: Session = Depends(get_db), _
         is_manual=1 if body.is_manual else 0,
         has_inbound=body.has_inbound if body.has_inbound is not None else True,
         has_outbound=body.has_outbound if body.has_outbound is not None else False,
+        work_start=body.work_start or "00:00",
+        work_end=body.work_end or "24:00",
     )
     db.add(project)
     db.commit()

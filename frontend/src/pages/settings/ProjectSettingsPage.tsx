@@ -9,6 +9,7 @@ import type { Project, Queue } from '@/types'
 import PageHeader from '@/components/common/PageHeader'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { useProjectStore } from '@/store/project'
+import TimeSelect from '@/components/common/TimeSelect'
 
 interface QueueSetting {
   queue_name: string; target_sl: number | null; answer_sec: number | null
@@ -16,7 +17,7 @@ interface QueueSetting {
 }
 interface EditingState {
   uuid: string; customer_name: string; responsible_manager: string; target_sl: string
-  has_inbound: boolean; has_outbound: boolean
+  has_inbound: boolean; has_outbound: boolean; work_start: string; work_end: string
 }
 
 // ─── Per-queue settings panel ─────────────────────────────────────────────────
@@ -339,6 +340,7 @@ export default function ProjectSettingsPage() {
     uuid: p.customer_uuid, customer_name: p.customer_name,
     responsible_manager: p.responsible_manager || '', target_sl: p.target_sl != null ? String(p.target_sl) : '',
     has_inbound: p.has_inbound ?? true, has_outbound: p.has_outbound ?? false,
+    work_start: p.work_start || '00:00', work_end: p.work_end || '24:00',
   })
 
   const saveEdit = () => {
@@ -351,6 +353,8 @@ export default function ProjectSettingsPage() {
         target_sl: editing.target_sl ? parseInt(editing.target_sl) : null,
         has_inbound: editing.has_inbound,
         has_outbound: editing.has_outbound,
+        work_start: editing.work_start,
+        work_end: editing.work_end,
       },
     })
   }
@@ -463,6 +467,13 @@ export default function ProjectSettingsPage() {
                           Исходящая линия
                         </label>
                       </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-medium text-slate-500">Время работы проекта:</span>
+                        <TimeSelect value={editing.work_start} onChange={(v) => setEditing({ ...editing, work_start: v || '00:00' })} />
+                        <span className="text-xs text-slate-400">—</span>
+                        <TimeSelect value={editing.work_end} onChange={(v) => setEditing({ ...editing, work_end: v || '24:00' })} />
+                        <span className="text-xs text-slate-400">по этому окну заполняется кружок покрытия смен (24:00 = круглосуточно)</span>
+                      </div>
                       <div className="flex gap-2">
                         <button onClick={saveEdit} className="btn-primary" disabled={updateMutation.isPending}>
                           <Save size={13} /> Сохранить
@@ -479,6 +490,8 @@ export default function ProjectSettingsPage() {
                           {p.target_sl != null && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">SL: {p.target_sl}%</span>}
                           {(p.has_inbound ?? true) && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">Вход</span>}
                           {(p.has_outbound ?? false) && <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Исход</span>}
+                          {p.work_start && p.work_end && !(p.work_start === '00:00' && p.work_end === '24:00') &&
+                            <span className="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full">⏱ {p.work_start}–{p.work_end}</span>}
                         </div>
                         {p.responsible_manager && <p className="text-xs text-slate-400 mt-0.5">{p.responsible_manager}</p>}
                       </div>

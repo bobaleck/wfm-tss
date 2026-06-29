@@ -100,18 +100,47 @@ function dayCoverageSegments(dayStr: string, shifts: Shift[]): [number, number][
 // Заливка круга-дня ПО ЧАСАМ суток (а не пропорционально): 00:00 — вверху, далее
 // по часовой стрелке (06:00 — справа, 12:00 — внизу, 18:00 — слева). Так смена
 // 06:00–18:00 закрашивает нижнюю половину. fill — цвет покрытых часов.
-function conicFromSegments(segs: [number, number][], fill = '#22c55e', empty = '#e2e8f0'): string {
-  if (!segs.length) return empty
+// winStart/winEnd — окно работы проекта (в часах суток). Заполнение круга идёт
+// ОТНОСИТЕЛЬНО этого окна: winStart наверху (0°), winEnd — снова наверху (360°).
+// Если проект работает 24ч (0..24) — поведение как раньше; если 12ч — полный
+// круг соответствует 12 часам. Для ночного окна (winEnd ≤ winStart) добавляем 24.
+function conicFromSegments(segs: [number, number][], fill = '#22c55e', empty = '#e2e8f0', winStart = 0, winEnd = 24): string {
+  const span = winEnd - winStart
+  if (span <= 0) return empty
+  const clamp = (h: number) => {
+    const x = h < winStart ? h + 24 : h
+    return Math.max(winStart, Math.min(winEnd, x))
+  }
+  const deg: [number, number][] = []
+  for (const [a, b] of segs) {
+    const aa = clamp(a), bb = clamp(b)
+    if (bb > aa) deg.push([((aa - winStart) / span) * 360, ((bb - winStart) / span) * 360])
+  }
+  if (!deg.length) return empty
+  deg.sort((x, y) => x[0] - y[0])
+  const merged: [number, number][] = [deg[0]]
+  for (let i = 1; i < deg.length; i++) {
+    const last = merged[merged.length - 1]
+    if (deg[i][0] <= last[1]) last[1] = Math.max(last[1], deg[i][1])
+    else merged.push(deg[i])
+  }
   const stops: string[] = []
   let prev = 0
-  for (const [a, b] of segs) {
-    const aDeg = (a / 24) * 360, bDeg = (b / 24) * 360
+  for (const [aDeg, bDeg] of merged) {
     if (aDeg > prev) stops.push(`${empty} ${prev}deg ${aDeg}deg`)
     stops.push(`${fill} ${aDeg}deg ${bDeg}deg`)
     prev = bDeg
   }
   if (prev < 360) stops.push(`${empty} ${prev}deg 360deg`)
   return `conic-gradient(${stops.join(', ')})`
+}
+
+// Часы из строки HH:MM (24:00 → 24). Для окна работы проекта.
+function parseHM(s?: string | null): number | null {
+  if (!s) return null
+  const [h, m] = s.split(':').map(Number)
+  if (Number.isNaN(h)) return null
+  return h + (m || 0) / 60
 }
 
 // Линия смены: входящая, если в line есть 'in' ИЛИ линия не задана (по умолчанию
@@ -182,6 +211,12 @@ function AssignShiftsView() {
   })
 
   if (!activeProject) return <div className="card p-6 text-sm text-amber-700 bg-amber-50">Выберите проект в шапке</div>
+
+  // Окно работы проекта (из настроек) — относительно него заполняются кружки покрытия.
+  const winStart = parseHM(activeProject.work_start) ?? 0
+  let winEnd = parseHM(activeProject.work_end) ?? 24
+  if (winEnd <= winStart) winEnd += 24
+  const fullDay = winStart === 0 && winEnd === 24
 
   const isMyTeam = (t: Team) => !!me && (t.leader_user_id === me.id || (t.user_ids || []).includes(me.id))
   const activeEmps = (employees || []).filter((e) => e.employment_status !== 'fired')
@@ -270,6 +305,7 @@ function AssignShiftsView() {
             <div className="flex items-center justify-center gap-4 mb-3 text-[11px] text-slate-400">
               <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Вход</span>
               <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-pink-500" /> Исход</span>
+              {!fullDay && <span className="text-slate-400" title="Время работы проекта — задаётся в настройках проекта">· круг = {activeProject.work_start}–{activeProject.work_end}</span>}
             </div>
 
             {/* Навигация по месяцам */}
@@ -298,9 +334,9 @@ function AssignShiftsView() {
                     title={`${dispD(ds)} · вход ${inH.toFixed(1)}ч · исход ${outH.toFixed(1)}ч`}
                     className="flex items-center justify-center cursor-pointer">
                     <div className={`relative w-10 h-10 rounded-full ${(isSel || inPeriod) ? 'ring-2 ring-brand-500 ring-offset-1' : ''}`}
-                      style={{ background: conicFromSegments(inSegs, '#22c55e') }}>
+                      style={{ background: conicFromSegments(inSegs, '#22c55e', '#e2e8f0', winStart, winEnd) }}>
                       {/* Внутренний розовый круг — покрытие исходящих смен */}
-                      <div className="absolute inset-[4px] rounded-full" style={{ background: conicFromSegments(outSegs, '#ec4899') }}>
+                      <div className="absolute inset-[4px] rounded-full" style={{ background: conicFromSegments(outSegs, '#ec4899', '#e2e8f0', winStart, winEnd) }}>
                         <div className={`absolute inset-[4px] rounded-full bg-white flex items-center justify-center text-xs font-medium ${inM ? 'text-slate-700' : 'text-slate-300'}`}>
                           {c.getDate()}
                         </div>

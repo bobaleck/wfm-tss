@@ -52,6 +52,8 @@ def _sqlite_migrate(db_engine):
         ("tracked_projects", "is_manual INTEGER DEFAULT 0"),
         ("tracked_projects", "has_inbound INTEGER DEFAULT 1"),
         ("tracked_projects", "has_outbound INTEGER DEFAULT 0"),
+        ("tracked_projects", "work_start TEXT DEFAULT '00:00'"),
+        ("tracked_projects", "work_end TEXT DEFAULT '24:00'"),
         ("queue_settings", "wrapup_sec INTEGER"),
         ("queue_settings", "show_in INTEGER DEFAULT 1"),
         ("queue_settings", "show_out INTEGER DEFAULT 0"),

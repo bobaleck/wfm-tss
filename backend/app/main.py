@@ -132,6 +132,7 @@ def _assign_orphans_to_x5():
     from sqlalchemy import or_
     from app.models.employee import Employee
     from app.models.team import Team
+    from app.models.schedule import Schedule
     from app.models.audit import TrackedProject
     db = SessionLocal()
     try:
@@ -148,9 +149,14 @@ def _assign_orphans_to_x5():
         team_n = db.query(Team).filter(
             or_(Team.project_uuid.is_(None), Team.project_uuid == "")
         ).update({Team.project_uuid: uuid}, synchronize_session=False)
-        if emp_n or team_n:
+        # Графики (шаблоны) без проекта тоже переносим в X5 — чтобы они не висели
+        # глобально и были индивидуальны по проектам.
+        sched_n = db.query(Schedule).filter(
+            or_(Schedule.project_uuid.is_(None), Schedule.project_uuid == "")
+        ).update({Schedule.project_uuid: uuid}, synchronize_session=False)
+        if emp_n or team_n or sched_n:
             db.commit()
-            print(f"[OK] Orphans -> X5 ({x5.customer_name}): employees={emp_n}, teams={team_n}")
+            print(f"[OK] Orphans -> X5 ({x5.customer_name}): employees={emp_n}, teams={team_n}, schedules={sched_n}")
         else:
             db.rollback()
     except Exception as e:
