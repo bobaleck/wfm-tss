@@ -52,7 +52,10 @@ def update_schedule(schedule_id: int, body: ScheduleUpdate,
         raise HTTPException(404, "Не найдено")
     if s.project_uuid:
         check_project_access(s.project_uuid, current_user, db)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    if data.get("project_uuid"):
+        check_project_access(data["project_uuid"], current_user, db)
+    for k, v in data.items():
         setattr(s, k, v)
     db.commit()
     db.refresh(s)

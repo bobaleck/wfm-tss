@@ -143,8 +143,10 @@ def get_queues(partner_uuid: str, overrides: dict = None) -> list[dict]:
 # ─── Нагрузка ─────────────────────────────────────────────────────────────────
 
 def get_workload(partner_uuid: str, begin_date: str, end_date: str,
-                 interval: str = "hour", overrides: dict = None) -> list[dict]:
+                 interval: str = "hour", overrides: dict = None,
+                 hidden_queue_names: list = None) -> list[dict]:
     trunc = "hour" if interval == "hour" else "day"
+    hidden_filter = "AND NOT (icp.title = ANY(%(hidden_queue_names)s))" if hidden_queue_names else ""
     query = f"""
     SELECT
         date_trunc('{trunc}', que.enqueued_time)                   AS period_start,
@@ -170,24 +172,30 @@ def get_workload(partner_uuid: str, begin_date: str, end_date: str,
                            AND cl.leg_id = que.next_leg_id
     WHERE icp.partneruuid = %(partner_uuid)s
       AND icp.removed = false
+      {hidden_filter}
       AND que.enqueued_time >= %(begin_date)s::timestamp
       AND que.enqueued_time <  %(end_date)s::timestamp
     GROUP BY date_trunc('{trunc}', que.enqueued_time), icp.title
     ORDER BY period_start, queue_name
     """
-    return _execute(query, {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}, overrides)
+    params = {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}
+    if hidden_queue_names:
+        params["hidden_queue_names"] = list(hidden_queue_names)
+    return _execute(query, params, overrides)
 
 
 # ─── Операторская нагрузка ────────────────────────────────────────────────────
 
 def get_operator_load(partner_uuid: str, begin_date: str, end_date: str,
                       work_statuses: list = None, offline_statuses: list = None,
-                      overrides: dict = None) -> list[dict]:
-    query = """
+                      overrides: dict = None, hidden_queue_names: list = None) -> list[dict]:
+    hidden_filter = "AND NOT (title = ANY(%(hidden_queue_names)s))" if hidden_queue_names else ""
+    query = f"""
     WITH active_queues AS (
         SELECT uuid AS q_uuid, calllimit
         FROM mv_incoming_call_project
         WHERE partneruuid = %(partner_uuid)s AND removed = false
+          {hidden_filter}
     ),
     operator_calls AS (
         SELECT
@@ -269,18 +277,22 @@ def get_operator_load(partner_uuid: str, begin_date: str, end_date: str,
         "wrapup_statuses": list(WRAPUP_STATUSES),
         "wrapup_stale_sec": WRAPUP_STALE_SEC,
     }
+    if hidden_queue_names:
+        params["hidden_queue_names"] = list(hidden_queue_names)
     return _execute(query, params, overrides)
 
 
 # ─── Статусы операторов ───────────────────────────────────────────────────────
 
 def get_status_summary(partner_uuid: str, begin_date: str, end_date: str,
-                       overrides: dict = None) -> list[dict]:
-    query = """
+                       overrides: dict = None, hidden_queue_names: list = None) -> list[dict]:
+    hidden_filter = "AND NOT (title = ANY(%(hidden_queue_names)s))" if hidden_queue_names else ""
+    query = f"""
     WITH active_queues AS (
         SELECT uuid AS q_uuid
         FROM mv_incoming_call_project
         WHERE partneruuid = %(partner_uuid)s AND removed = false
+          {hidden_filter}
     ),
     active_logins AS (
         SELECT DISTINCT COALESCE(cl_op.dst_id, cl_op.dst_abonent,
@@ -311,7 +323,10 @@ def get_status_summary(partner_uuid: str, begin_date: str, end_date: str,
     GROUP BY sc.login, sc.status
     ORDER BY sc.login, total_duration_sec DESC
     """
-    return _execute(query, {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}, overrides)
+    params = {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}
+    if hidden_queue_names:
+        params["hidden_queue_names"] = list(hidden_queue_names)
+    return _execute(query, params, overrides)
 
 
 def get_distinct_statuses_for_project(partner_uuid: str, overrides: dict = None,
@@ -684,11 +699,14 @@ def get_actual_operators_by_hour(logins: list, begin_date: str, end_date: str,
     return _execute(query, {"logins": logins, "begin_date": begin_date, "end_date": end_date}, overrides)
 
 
-def get_recent_stats(partner_uuid: str, window_min: int, overrides: dict = None) -> dict:
+def get_recent_stats(partner_uuid: str, window_min: int, overrides: dict = None,
+                     hidden_queue_names: list = None) -> dict:
     """Статистика за последние window_min минут: по очередям (Поступило/Обработано/
     Потеряно/SL/AHT) и по (оператор, очередь) — для раздела «Мониторинг → Статистика»
     с ползунком окна. Окно произвольное (минуты), т.к. считаем прямо по звонкам."""
-    q_queue = """
+    hidden_icp_filter = "AND NOT (icp.title = ANY(%(hidden_queue_names)s))" if hidden_queue_names else ""
+    hidden_aq_filter = "AND NOT (title = ANY(%(hidden_queue_names)s))" if hidden_queue_names else ""
+    q_queue = f"""
     SELECT
         icp.title AS queue_name,
         COUNT(*) AS total,
@@ -706,15 +724,17 @@ def get_recent_stats(partner_uuid: str, window_min: int, overrides: dict = None)
     JOIN mv_incoming_call_project icp ON icp.uuid = que.project_id
     LEFT JOIN call_legs cl ON cl.session_id = que.session_id AND cl.leg_id = que.next_leg_id
     WHERE icp.partneruuid = %(p)s AND icp.removed = false
+      {hidden_icp_filter}
       AND que.enqueued_time >= NOW() - make_interval(mins => %(w)s)
     GROUP BY icp.title
     ORDER BY total DESC
     """
-    q_op = """
+    q_op = f"""
     WITH aq AS (
         SELECT uuid AS q_uuid, title AS queue_name, calllimit
         FROM mv_incoming_call_project
         WHERE partneruuid = %(p)s AND removed = false
+          {hidden_aq_filter}
     )
     SELECT
         aq.queue_name AS queue_name,
@@ -736,21 +756,26 @@ def get_recent_stats(partner_uuid: str, window_min: int, overrides: dict = None)
     GROUP BY aq.queue_name, COALESCE(cl.dst_id, cl.dst_abonent), em.title
     ORDER BY handled DESC
     """
-    by_queue = _execute(q_queue, {"p": partner_uuid, "w": window_min}, overrides)
-    by_op_queue = _execute(q_op, {"p": partner_uuid, "w": window_min}, overrides)
+    params = {"p": partner_uuid, "w": window_min}
+    if hidden_queue_names:
+        params["hidden_queue_names"] = list(hidden_queue_names)
+    by_queue = _execute(q_queue, params, overrides)
+    by_op_queue = _execute(q_op, params, overrides)
     return {"by_queue": by_queue, "by_operator_queue": by_op_queue}
 
 
 def get_operator_load_by_queue(partner_uuid: str, begin_date: str, end_date: str,
-                               overrides: dict = None) -> list[dict]:
+                               overrides: dict = None, hidden_queue_names: list = None) -> list[dict]:
     """Нагрузка операторов в разрезе ОЧЕРЕДЕЙ: на каждую (очередь, оператор) —
     обработанные звонки, AHT, общее время разговора, ср. ответ, SL. Позволяет
     показать операторов по очередям и, наоборот, очереди по оператору."""
-    query = """
+    hidden_filter = "AND NOT (title = ANY(%(hidden_queue_names)s))" if hidden_queue_names else ""
+    query = f"""
     WITH active_queues AS (
         SELECT uuid AS q_uuid, title AS queue_name, calllimit
         FROM mv_incoming_call_project
         WHERE partneruuid = %(partner_uuid)s AND removed = false
+          {hidden_filter}
     ),
     operator_calls AS (
         SELECT
@@ -802,17 +827,22 @@ def get_operator_load_by_queue(partner_uuid: str, begin_date: str, end_date: str
     LEFT JOIN mv_employee em ON em.login = oc.login
     ORDER BY oc.queue_name, oc.handled_calls DESC
     """
-    return _execute(query, {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}, overrides)
+    params = {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}
+    if hidden_queue_names:
+        params["hidden_queue_names"] = list(hidden_queue_names)
+    return _execute(query, params, overrides)
 
 
 def get_actual_operators_union(partner_uuid: str, begin_date: str, end_date: str,
-                               queues: list = None, overrides: dict = None) -> list[dict]:
+                               queues: list = None, overrides: dict = None,
+                               hidden_queue_names: list = None) -> list[dict]:
     """Среднее фактическое число операторов по часам суток, считая ФАКТ по
     очередям через обработку звонков. Если передан список queues — берём только
     их, но оператор, работавший в нескольких выбранных очередях, считается ОДИН
     раз (COUNT(DISTINCT login) на (день,час) поверх всех выбранных очередей =
     union). Это исправляет двойной счёт мультиочередных операторов."""
     queue_filter = "AND icp.title = ANY(%(queues)s)" if queues else ""
+    hidden_filter = "AND NOT (icp.title = ANY(%(hidden_queue_names)s))" if hidden_queue_names else ""
     query = f"""
     WITH active AS (
         SELECT
@@ -830,6 +860,7 @@ def get_actual_operators_union(partner_uuid: str, begin_date: str, end_date: str
           AND que.enqueued_time <  %(end_date)s::timestamp
           AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
           {queue_filter}
+          {hidden_filter}
     ),
     by_day_hour AS (
         SELECT d, hour_num, COUNT(DISTINCT login) AS cnt
@@ -841,14 +872,17 @@ def get_actual_operators_union(partner_uuid: str, begin_date: str, end_date: str
     params = {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}
     if queues:
         params["queues"] = queues
+    if hidden_queue_names:
+        params["hidden_queue_names"] = list(hidden_queue_names)
     return _execute(query, params, overrides)
 
 
 def get_actual_operators_by_queue(partner_uuid: str, begin_date: str, end_date: str,
-                                  overrides: dict = None) -> list[dict]:
+                                  overrides: dict = None, hidden_queue_names: list = None) -> list[dict]:
     """Среднее фактическое число операторов по (очередь, час). Для разреза по
     очередям. Union по выбранным очередям считать отдельно (get_actual_operators_union)."""
-    query = """
+    hidden_filter = "AND NOT (icp.title = ANY(%(hidden_queue_names)s))" if hidden_queue_names else ""
+    query = f"""
     WITH active AS (
         SELECT
             icp.title                                      AS queue_name,
@@ -861,6 +895,7 @@ def get_actual_operators_by_queue(partner_uuid: str, begin_date: str, end_date: 
                                AND cl.leg_id = que.next_leg_id
         WHERE icp.partneruuid = %(partner_uuid)s
           AND icp.removed = false
+          {hidden_filter}
           AND que.final_stage = 'operator'
           AND que.enqueued_time >= %(begin_date)s::timestamp
           AND que.enqueued_time <  %(end_date)s::timestamp
@@ -873,11 +908,15 @@ def get_actual_operators_by_queue(partner_uuid: str, begin_date: str, end_date: 
     SELECT queue_name, hour_num, ROUND(AVG(cnt)::numeric, 1) AS avg_operators
     FROM by_q_day_hour GROUP BY queue_name, hour_num ORDER BY queue_name, hour_num
     """
-    return _execute(query, {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}, overrides)
+    params = {"partner_uuid": partner_uuid, "begin_date": begin_date, "end_date": end_date}
+    if hidden_queue_names:
+        params["hidden_queue_names"] = list(hidden_queue_names)
+    return _execute(query, params, overrides)
 
 
 def get_current_operators_for_project(partner_uuid: str, overrides: dict = None,
-                                      work_statuses: list = None, offline_statuses: list = None) -> list[dict]:
+                                      work_statuses: list = None, offline_statuses: list = None,
+                                      hidden_queue_names: list = None) -> list[dict]:
     """Текущие статусы операторов проекта. `entered` — НЕ время последней
     «сырой» смены статуса, а начало текущего непрерывного отрезка той же
     КЛАССИФИКАЦИИ (в линии / на паузе / офлайн). Так «в линии с HH:MM»
@@ -887,7 +926,8 @@ def get_current_operators_for_project(partner_uuid: str, overrides: dict = None,
     from app.services.status_classification import STANDARD_WORK, STANDARD_OFFLINE
     work = work_statuses if work_statuses is not None else list(STANDARD_WORK)
     offline = offline_statuses if offline_statuses is not None else list(STANDARD_OFFLINE)
-    query = """
+    hidden_filter = "AND NOT (icp.title = ANY(%(hidden_queue_names)s))" if hidden_queue_names else ""
+    query = f"""
     WITH project_logins AS (
         SELECT DISTINCT COALESCE(cl.dst_id, cl.dst_abonent) AS login
         FROM queued_calls_ms que
@@ -896,6 +936,7 @@ def get_current_operators_for_project(partner_uuid: str, overrides: dict = None,
                                AND cl.leg_id = que.next_leg_id
         WHERE icp.partneruuid = %(partner_uuid)s
           AND icp.removed = false
+          {hidden_filter}
           AND que.final_stage = 'operator'
           AND que.enqueued_time >= NOW() - INTERVAL '7 days'
           AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
@@ -944,10 +985,14 @@ def get_current_operators_for_project(partner_uuid: str, overrides: dict = None,
     LEFT JOIN mv_employee em ON em.login = l.login
     ORDER BY l.status, l.entered DESC
     """
-    return _execute(query, {"partner_uuid": partner_uuid, "work": work, "offline": offline}, overrides)
+    params = {"partner_uuid": partner_uuid, "work": work, "offline": offline}
+    if hidden_queue_names:
+        params["hidden_queue_names"] = list(hidden_queue_names)
+    return _execute(query, params, overrides)
 
 
-def get_operator_queues_map(partner_uuid: str, days: int = 7, overrides: dict = None) -> dict:
+def get_operator_queues_map(partner_uuid: str, days: int = 7, overrides: dict = None,
+                            hidden_queue_names: list = None) -> dict:
     """Для каждого оператора проекта — очереди, в которых он недавно (за `days`
     суток) обрабатывал звонки, упорядоченные по числу звонков (наиболее
     «своя» очередь — первой). Используется в Мониторинге, чтобы рядом с ФИО
@@ -955,7 +1000,8 @@ def get_operator_queues_map(partner_uuid: str, days: int = 7, overrides: dict = 
     Явной привязки «оператор ⇄ очередь» в схеме нет — принадлежность очереди
     выводим из фактически обработанных звонков (тот же принцип, что и членство
     в проекте)."""
-    query = """
+    hidden_filter = "AND NOT (icp.title = ANY(%(hidden_queue_names)s))" if hidden_queue_names else ""
+    query = f"""
     SELECT
         COALESCE(cl.dst_id, cl.dst_abonent) AS login,
         icp.title                           AS queue_name,
@@ -966,13 +1012,17 @@ def get_operator_queues_map(partner_uuid: str, days: int = 7, overrides: dict = 
                            AND cl.leg_id = que.next_leg_id
     WHERE icp.partneruuid = %(p)s
       AND icp.removed = false
+      {hidden_filter}
       AND que.final_stage = 'operator'
       AND que.enqueued_time >= NOW() - make_interval(days => %(d)s)
       AND COALESCE(cl.dst_id, cl.dst_abonent) IS NOT NULL
     GROUP BY COALESCE(cl.dst_id, cl.dst_abonent), icp.title
     ORDER BY login, cnt DESC
     """
-    rows = _execute(query, {"p": partner_uuid, "d": days}, overrides)
+    params = {"p": partner_uuid, "d": days}
+    if hidden_queue_names:
+        params["hidden_queue_names"] = list(hidden_queue_names)
+    rows = _execute(query, params, overrides)
     result: dict = {}
     for r in rows:
         result.setdefault(r["login"], []).append(r["queue_name"])
@@ -1029,21 +1079,27 @@ def get_operator_day_seconds(login: str, work_date: str, overrides: dict = None,
     return float(result[0]["total_sec"]) if result else 0.0
 
 
-def get_operator_outbound_projects_map(partner_uuid: str, days: int = 7, overrides: dict = None) -> dict:
+def get_operator_outbound_projects_map(partner_uuid: str, days: int = 7, overrides: dict = None,
+                                       project_ids: list = None) -> dict:
     """Для каждого оператора — исходящие проекты (линии), по которым он недавно
     (за `days` суток) делал попытки. Аналог get_operator_queues_map, но для
     исходящих (источник — detail_outbound_sessions_ms)."""
-    query = """
+    project_filter = "AND d.project_id = ANY(%(project_ids)s)" if project_ids is not None else ""
+    query = f"""
     SELECT d.login AS login, ocp.title AS queue_name, COUNT(*) AS cnt
     FROM detail_outbound_sessions_ms d
     JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
     WHERE ocp.partneruuid = %(p)s
+      {project_filter}
       AND d.attempt_start >= NOW() - make_interval(days => %(d)s)
       AND d.login IS NOT NULL
     GROUP BY d.login, ocp.title
     ORDER BY login, cnt DESC
     """
-    rows = _execute(query, {"p": partner_uuid, "d": days}, overrides)
+    params = {"p": partner_uuid, "d": days}
+    if project_ids is not None:
+        params["project_ids"] = list(project_ids)
+    rows = _execute(query, params, overrides)
     result: dict = {}
     for r in rows:
         result.setdefault(r["login"], []).append(r["queue_name"])
@@ -1051,7 +1107,8 @@ def get_operator_outbound_projects_map(partner_uuid: str, days: int = 7, overrid
 
 
 def get_current_operators_outbound(partner_uuid: str, overrides: dict = None,
-                                   work_statuses: list = None, offline_statuses: list = None) -> list[dict]:
+                                   work_statuses: list = None, offline_statuses: list = None,
+                                   project_ids: list = None) -> list[dict]:
     """Текущие статусы операторов ИСХОДЯЩИХ линий проекта (в линии / на паузе /
     вышел). Состав операторов — логины из detail_outbound_sessions_ms за 7 дней
     (исходящие проекты партнёра). Статус — как в get_current_operators_for_project:
@@ -1059,12 +1116,14 @@ def get_current_operators_outbound(partner_uuid: str, overrides: dict = None,
     from app.services.status_classification import STANDARD_WORK, STANDARD_OFFLINE
     work = work_statuses if work_statuses is not None else list(STANDARD_WORK)
     offline = offline_statuses if offline_statuses is not None else list(STANDARD_OFFLINE)
-    query = """
+    project_filter = "AND d.project_id = ANY(%(project_ids)s)" if project_ids is not None else ""
+    query = f"""
     WITH op_logins AS (
         SELECT DISTINCT d.login AS login
         FROM detail_outbound_sessions_ms d
         JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
         WHERE ocp.partneruuid = %(partner_uuid)s
+          {project_filter}
           AND d.attempt_start >= NOW() - INTERVAL '7 days'
           AND d.login IS NOT NULL
     ),
@@ -1108,17 +1167,21 @@ def get_current_operators_outbound(partner_uuid: str, overrides: dict = None,
     LEFT JOIN mv_employee em ON em.login = l.login
     ORDER BY l.status, l.entered DESC
     """
-    return _execute(query, {"partner_uuid": partner_uuid, "work": work, "offline": offline}, overrides)
+    params = {"partner_uuid": partner_uuid, "work": work, "offline": offline}
+    if project_ids is not None:
+        params["project_ids"] = list(project_ids)
+    return _execute(query, params, overrides)
 
 
 def get_recent_stats_outbound(partner_uuid: str, window_min: int, overrides: dict = None,
-                              queue_names: list = None) -> dict:
+                              queue_names: list = None, project_ids: list = None) -> dict:
     """Live-статистика исходящего обзвона за последние window_min минут: по
     операторам (попытки/контакты/ср.разговор) и по результату попыток. Контакт =
     реальный разговор speaking_time > 10 c. Времена dosm — в МС.
     queue_names — фильтр по выбранным исходящим подпроектам (по названию,
     ocp.title); если задан — статистика только по этим линиям."""
-    flt = "AND ocp.title = ANY(%(qn)s)" if queue_names else ""
+    name_filter = "AND ocp.title = ANY(%(qn)s)" if queue_names is not None else ""
+    project_filter = "AND d.project_id = ANY(%(project_ids)s)" if project_ids is not None else ""
     q_op = f"""
     SELECT
         d.login AS login,
@@ -1132,7 +1195,8 @@ def get_recent_stats_outbound(partner_uuid: str, window_min: int, overrides: dic
     WHERE ocp.partneruuid = %(p)s
       AND d.attempt_start >= NOW() - make_interval(mins => %(w)s)
       AND d.login IS NOT NULL
-      {flt}
+      {name_filter}
+      {project_filter}
     GROUP BY d.login, em.title
     ORDER BY attempts DESC
     """
@@ -1143,13 +1207,16 @@ def get_recent_stats_outbound(partner_uuid: str, window_min: int, overrides: dic
     JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
     WHERE ocp.partneruuid = %(p)s
       AND d.attempt_start >= NOW() - make_interval(mins => %(w)s)
-      {flt}
+      {name_filter}
+      {project_filter}
     GROUP BY d.attempt_result
     ORDER BY cnt DESC
     """
     params = {"p": partner_uuid, "w": window_min}
-    if queue_names:
+    if queue_names is not None:
         params["qn"] = list(queue_names)
+    if project_ids is not None:
+        params["project_ids"] = list(project_ids)
     res = _execute_multi([(q_op, params), (q_res, params)], overrides)
     return {"by_operator": res[0], "by_result": res[1]}
 
@@ -1173,7 +1240,7 @@ def get_outbound_summary(partner_uuid: str, begin_date: str, end_date: str,
     - контакт = реальный разговор speaking_time > 10 c;
     - бизнес-результат — по ПОСЛЕДНЕЙ попытке кейса (1 кейс = 1 итог).
     project_ids — фильтр по конкретным исходящим подпроектам (если задан)."""
-    flt = "AND d.project_id = ANY(%(pids)s)" if project_ids else ""
+    flt = "AND d.project_id = ANY(%(pids)s)" if project_ids is not None else ""
     base = f"""
         FROM detail_outbound_sessions_ms d
         JOIN mv_outcoming_call_project ocp ON ocp.uuid = d.project_id AND ocp.removed = false
@@ -1229,7 +1296,7 @@ def get_outbound_summary(partner_uuid: str, begin_date: str, end_date: str,
     ORDER BY attempts DESC
     """
     params = {"p": partner_uuid, "begin": begin_date, "end": end_date}
-    if project_ids:
+    if project_ids is not None:
         params["pids"] = project_ids
     totals, by_result, by_day, by_project = _execute_multi(
         [(q_totals, params), (q_by_result, params), (q_by_day, params), (q_by_project, params)], overrides,
@@ -1246,7 +1313,7 @@ def get_outbound_operator_load(partner_uuid: str, begin_date: str, end_date: str
                                project_ids: list = None, overrides: dict = None) -> list[dict]:
     """Нагрузка операторов на обзвоне за период: попытки, контакты, contact rate,
     ср. разговор, кейсы, попыток на кейс. project_ids — фильтр по подпроектам."""
-    flt = "AND d.project_id = ANY(%(pids)s)" if project_ids else ""
+    flt = "AND d.project_id = ANY(%(pids)s)" if project_ids is not None else ""
     query = f"""
     SELECT
         d.login AS login,
@@ -1269,7 +1336,7 @@ def get_outbound_operator_load(partner_uuid: str, begin_date: str, end_date: str
     ORDER BY attempts DESC
     """
     params = {"p": partner_uuid, "begin": begin_date, "end": end_date}
-    if project_ids:
+    if project_ids is not None:
         params["pids"] = project_ids
     return _execute(query, params, overrides)
 
@@ -1278,7 +1345,7 @@ def get_outbound_load_by_hour(partner_uuid: str, begin_date: str, end_date: str,
                               project_ids: list = None, overrides: dict = None) -> list[dict]:
     """Нагрузка обзвона по часам суток за период (когда звонят): попытки и контакты.
     project_ids — фильтр по подпроектам."""
-    flt = "AND d.project_id = ANY(%(pids)s)" if project_ids else ""
+    flt = "AND d.project_id = ANY(%(pids)s)" if project_ids is not None else ""
     query = f"""
     SELECT EXTRACT(HOUR FROM d.attempt_start)::int          AS hour_num,
            COUNT(*)                                         AS attempts,
@@ -1293,7 +1360,7 @@ def get_outbound_load_by_hour(partner_uuid: str, begin_date: str, end_date: str,
     ORDER BY hour_num
     """
     params = {"p": partner_uuid, "begin": begin_date, "end": end_date}
-    if project_ids:
+    if project_ids is not None:
         params["pids"] = project_ids
     return _execute(query, params, overrides)
 

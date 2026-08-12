@@ -78,7 +78,10 @@ def update_skill(skill_id: int, body: SkillUpdate, db: Session = Depends(get_db)
         raise HTTPException(404, detail="Не найден")
     if skill.project_uuid:
         check_project_access(skill.project_uuid, current_user, db)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    if data.get("project_uuid"):
+        check_project_access(data["project_uuid"], current_user, db)
+    for k, v in data.items():
         setattr(skill, k, v)
     db.commit()
     db.refresh(skill)

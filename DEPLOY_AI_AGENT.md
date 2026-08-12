@@ -89,6 +89,7 @@ python3.11 -m venv venv
 `.env` (на основе `.env.example`):
 ```env
 SECRET_KEY=<вставь вывод: python3 -c "import secrets; print(secrets.token_hex(32))">
+FIRST_ADMIN_PASSWORD=<временный сложный пароль для первого входа>
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 WFM_DATABASE_URL=postgresql+psycopg2://wfm_user:CHANGE_ME_STRONG@localhost:5432/wfm_db
 # Naumen можно оставить пустым и задать через UI:
@@ -128,7 +129,7 @@ curl -fsS http://127.0.0.1:8000/health   # ожидаем {"status":"ok",...}
 ```
 
 На первом старте в журнале (`journalctl -u wfm-backend -n 50`) будет:
-- `[OK] Admin created: login=admin password=admin123` (только если админа ещё нет);
+- `[OK] Admin created: login=admin ...` (только если админа ещё нет; пароль берётся из `FIRST_ADMIN_PASSWORD`);
 - `[OK] Orphans -> X5 (...)` — если найден проект с «X5» в названии и были
   сотрудники/команды без проекта (миграция идемпотентна, повторно не вредит).
 
@@ -161,7 +162,7 @@ HTTPS: `sudo certbot --nginx -d wfm.yourdomain.ru`.
 
 ## 7. Пост-деплой (обязательно)
 
-1. Войти `admin / admin123` → **сразу сменить пароль** в Личном кабинете.
+1. Войти как `admin` с паролем `FIRST_ADMIN_PASSWORD` → **сразу сменить пароль** в Личном кабинете.
    Восстановление пароля сотрудника — только администратором.
 2. **Интеграции** → ввести параметры Naumen PostgreSQL → «Проверить соединение».
 3. Выбрать проект в шапке. **Сотрудники → Синхронизировать** — подтянуть операторов.

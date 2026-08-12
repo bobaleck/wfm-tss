@@ -94,6 +94,8 @@ def update_team(team_id: int, body: TeamUpdate, db: Session = Depends(get_db), c
     if team.project_uuid:
         check_project_access(team.project_uuid, current_user, db)
     data = body.model_dump(exclude_unset=True)
+    if data.get("project_uuid"):
+        check_project_access(data["project_uuid"], current_user, db)
     user_ids = data.pop("user_ids", None)
     for k, v in data.items():
         setattr(team, k, v)

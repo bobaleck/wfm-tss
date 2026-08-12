@@ -112,14 +112,15 @@ def _seed_admin():
                 username="admin",
                 email="admin@telesales-service.ru",
                 full_name="Администратор",
-                hashed_password=get_password_hash("admin123"),
+                hashed_password=get_password_hash(settings.FIRST_ADMIN_PASSWORD),
                 role="admin",
                 is_superuser=True,
                 is_active=True,
             )
             db.add(admin)
             db.commit()
-            print("[OK] Admin created: login=admin password=admin123")
+            # Пароль не выводим в журнал: он может быть задан секретом окружения.
+            print("[OK] Admin created: login=admin (password from FIRST_ADMIN_PASSWORD)")
     finally:
         db.close()
 

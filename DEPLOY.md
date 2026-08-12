@@ -72,6 +72,7 @@ nano .env
 ```env
 # Ключ для JWT — сгенерируйте: python3 -c "import secrets; print(secrets.token_hex(32))"
 SECRET_KEY=your_secret_key_here
+FIRST_ADMIN_PASSWORD=CHANGE_ME_TEMP_ADMIN_PASSWORD
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 
@@ -221,7 +222,7 @@ sudo chmod -R 755 /opt/wfm/app/frontend/dist
 ## 8. Первый вход и настройка
 
 1. Откройте браузер: `http://wfm.yourdomain.ru`
-2. Войдите: **admin / admin123**
+2. Войдите как **admin** с паролем `FIRST_ADMIN_PASSWORD` из `.env`
 3. **Немедленно** смените пароль: Настройки → Смена пароля
 4. Перейдите в **Интеграции** и введите данные Naumen PostgreSQL
 5. Нажмите «Проверить соединение» — должно появиться «Соединение успешно»
@@ -271,6 +272,7 @@ sudo crontab -e
 | Переменная | Описание | Обязательная |
 |---|---|---|
 | `SECRET_KEY` | JWT signing key (32+ hex chars) | Да |
+| `FIRST_ADMIN_PASSWORD` | Пароль admin при первом создании пользователя | Да, до первого запуска |
 | `WFM_DATABASE_URL` | PostgreSQL WFM: `postgresql+psycopg2://user:pass@host/db` | Да |
 | `NCC_DB_HOST` | Naumen DB host | Через UI |
 | `NCC_DB_NAME` | Naumen DB name (обычно `nccrep`) | Через UI |

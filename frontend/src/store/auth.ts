@@ -20,29 +20,22 @@ export const useAuthStore = create<AuthState>()(
       user: null,
 
       setToken: (token) => {
-        console.log('[auth] setToken called, writing to localStorage')
         set({ token })
         localStorage.setItem('wfm_token', token)
-        console.log('[auth] wfm_token in storage:', localStorage.getItem('wfm_token')?.slice(0, 20) + '…')
       },
 
       setUser: (user) => set({ user }),
 
       logout: () => {
-        console.log('[auth] logout called')
         set({ token: null, user: null })
         clearAuthStorage()
       },
 
       login: async (username, password) => {
-        console.log('[auth] login() start')
         const res = await api.post('/auth/login', { username, password })
-        console.log('[auth] /auth/login 200, got token')
         const { access_token } = res.data
         get().setToken(access_token)
-        console.log('[auth] calling fetchMe()')
         await get().fetchMe()
-        console.log('[auth] fetchMe() done — login complete')
       },
 
       fetchMe: async () => {

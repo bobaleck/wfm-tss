@@ -6,7 +6,7 @@ from app.core.security import verify_password, create_access_token
 from app.models.user import User
 from app.schemas.auth import LoginRequest, Token
 from app.schemas.user import UserOut
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, check_project_access
 
 router = APIRouter()
 
@@ -28,6 +28,10 @@ def get_me(current_user: User = Depends(get_current_user)):
 @router.put("/me/project")
 def set_active_project(project_uuid: str, current_user: User = Depends(get_current_user),
                        db: Session = Depends(get_db)):
+    # Не позволяем сохранить активным проект, которого нет в назначениях
+    # пользователя. Остальные API и так проверяют доступ, но без этой проверки
+    # в профиле оставалось недоступное значение и UI попадал в цикл 403.
+    check_project_access(project_uuid, current_user, db)
     current_user.active_project_uuid = project_uuid
     db.commit()
     return {"ok": True}

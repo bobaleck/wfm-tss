@@ -51,7 +51,9 @@ export function outboundParams(partnerUuid: string | undefined, begin: string, e
 // если ничего не выбрано — берём все видимые (когда есть скрытые, иначе пусто =
 // без фильтра, быстрее); если выбраны — берём выбранные.
 export function effectiveProjectIds(projects: OutProject[], selected: Set<string>): string[] {
-  if (selected.size > 0) return [...selected]
+  const visibleIds = new Set(projects.filter((p) => !p.hidden).map((p) => p.project_uuid))
+  const visibleSelected = [...selected].filter((id) => visibleIds.has(id))
+  if (visibleSelected.length > 0) return visibleSelected
   const anyHidden = projects.some((p) => p.hidden)
   if (!anyHidden) return []
   const visible = projects.filter((p) => !p.hidden).map((p) => p.project_uuid)
@@ -62,12 +64,13 @@ export function effectiveProjectIds(projects: OutProject[], selected: Set<string
 export default function OutboundProjectFilter({ projects, selected, onChange }: {
   projects: OutProject[]; selected: Set<string>; onChange: (s: Set<string>) => void
 }) {
-  if (projects.length <= 1) return null
+  const visibleProjects = projects.filter((p) => !p.hidden)
+  if (visibleProjects.length <= 1) return null
   const nameByUuid: Record<string, string> = {}
-  for (const p of projects) nameByUuid[p.project_uuid] = p.name
+  for (const p of visibleProjects) nameByUuid[p.project_uuid] = p.name
   return (
     <QueueFilterDropdown
-      queues={projects.map((p) => p.project_uuid)}
+      queues={visibleProjects.map((p) => p.project_uuid)}
       selected={selected}
       onChange={onChange}
       label=""

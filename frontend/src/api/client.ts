@@ -34,18 +34,12 @@ api.interceptors.request.use((config) => {
   const token = getToken()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
-    console.log('[REQ]', config.method?.toUpperCase(), config.url, '→ token OK')
-  } else {
-    console.warn('[REQ]', config.method?.toUpperCase(), config.url, '→ NO TOKEN')
   }
   return config
 })
 
 api.interceptors.response.use(
-  (res) => {
-    console.log('[RES]', res.status, res.config.url)
-    return res
-  },
+  (res) => res,
   (err) => {
     const status = err.response?.status
     const url = err.config?.url
@@ -53,18 +47,9 @@ api.interceptors.response.use(
       const sentAuth = err.config?.headers?.Authorization as string | undefined
       const sentToken = sentAuth?.startsWith('Bearer ') ? sentAuth.slice(7) : null
       const currentToken = getToken()
-      console.error(
-        `[401] ${url}`,
-        '\n  sentToken:', sentToken ? sentToken.slice(0, 20) + '…' : 'NONE',
-        '\n  currentToken:', currentToken ? currentToken.slice(0, 20) + '…' : 'NONE',
-        '\n  match:', sentToken === currentToken,
-      )
       if (!currentToken || sentToken === currentToken) {
-        console.error('[401] → LOGOUT + navigate /login')
         clearAuthStorage()
         _onUnauthorized()
-      } else {
-        console.warn('[401] → STALE REQUEST IGNORED (new token already present)')
       }
     } else {
       console.error('[ERR]', status, url, err.message)

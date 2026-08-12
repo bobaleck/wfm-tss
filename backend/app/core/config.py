@@ -4,6 +4,7 @@ from typing import List
 
 class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-change-in-production"
+    FIRST_ADMIN_PASSWORD: str = "admin123"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     ALGORITHM: str = "HS256"
 

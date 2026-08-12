@@ -59,7 +59,7 @@ cp backend/.env.example backend/.env
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SECRET_KEY` | JWT signing key — **change in prod** | `dev-secret-key` |
-| `DATABASE_URL` | SQLAlchemy DB URL | `sqlite:///./wfm.db` |
+| `WFM_DATABASE_URL` | SQLAlchemy DB URL | `sqlite:///./wfm.db` |
 | `NCC_DB_HOST` | Naumen PostgreSQL host | — |
 | `NCC_DB_NAME` | Naumen database name | `nccrep` |
 | `NCC_DB_USER` | Naumen DB user | — |
@@ -73,8 +73,8 @@ cp backend/.env.example backend/.env
 
 ```bash
 cd backend
-# Creates all tables (SQLAlchemy create_all) + seeds admin user
-python -m app.core.init_db
+# Создаёт таблицы; admin будет создан при первом старте backend
+python -c "from app.core.database import init_db; init_db()"
 ```
 
 Default admin: **username** `admin`, **password** from `FIRST_ADMIN_PASSWORD`.
@@ -122,9 +122,9 @@ After=network.target
 
 [Service]
 User=www-data
-WorkingDirectory=/opt/wfm/backend
-EnvironmentFile=/opt/wfm/backend/.env
-ExecStart=/opt/wfm/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+WorkingDirectory=/opt/wfm/app/backend
+EnvironmentFile=/opt/wfm/app/backend/.env
+ExecStart=/opt/wfm/app/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=on-failure
 
 [Install]
@@ -145,7 +145,7 @@ server {
     server_name wfm.example.com;
 
     # Serve built frontend
-    root /opt/wfm/frontend/dist;
+root /opt/wfm/app/frontend/dist;
     index index.html;
 
     # SPA fallback
@@ -170,8 +170,8 @@ nginx -t && systemctl reload nginx
 
 ```bash
 createdb wfm
-# Set DATABASE_URL=postgresql+psycopg2://user:pass@localhost/wfm in .env
-cd backend && python -m app.core.init_db
+# Set WFM_DATABASE_URL=postgresql+psycopg2://user:pass@localhost/wfm in .env
+cd backend && python -c "from app.core.database import init_db; init_db()"
 ```
 
 ---
@@ -190,7 +190,7 @@ For an AI coding agent (OpenAI Codex, Claude Code, etc.) to work with this repo:
 | Start backend | `cd backend && uvicorn app.main:app --reload` |
 | Start frontend | `cd frontend && npm run dev` |
 | Build frontend | `cd frontend && npm run build` |
-| Run DB migrations | `cd backend && python -m app.core.init_db` |
+| Run DB migrations | `cd backend && python -c "from app.core.database import init_db; init_db()"` |
 
 ### Project structure
 

@@ -42,7 +42,16 @@ function QueueSettingsPanel({ project }: { project: Project }) {
   const saveMutation = useMutation({
     mutationFn: (items: QueueSetting[]) =>
       api.put(`/queue-settings/${project.customer_uuid}`, items),
-    onSuccess: () => { refetch(); setLocalEdits({}); setSaved(true); setTimeout(() => setSaved(false), 2000) },
+    onSuccess: () => {
+      refetch()
+      // Флаг «Скрыть» меняет состав всех статистических выборок. Сбрасываем
+      // кэш проекта, чтобы уже открытые/недавно посещённые экраны не держали
+      // старые данные до истечения своего staleTime.
+      qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] !== 'queue-settings' && q.queryKey.includes(project.customer_uuid),
+      })
+      setLocalEdits({}); setSaved(true); setTimeout(() => setSaved(false), 2000)
+    },
   })
 
   const deleteMutation = useMutation({
@@ -54,7 +63,9 @@ function QueueSettingsPanel({ project }: { project: Project }) {
   const loadNaumenQueues = async () => {
     setLoadingNaumen(true)
     try {
-      const res = await api.get('/analytics/queues', { params: { partner_uuid: project.customer_uuid } })
+      const res = await api.get('/analytics/queues', {
+        params: { partner_uuid: project.customer_uuid, include_hidden: true },
+      })
       const names = (res.data.data as Queue[]).map((q) => q.name)
       setNaumenQueues(names)
       // Pre-fill settings for queues not yet configured
@@ -209,15 +220,19 @@ interface OutProjRow { project_uuid: string; name: string; status?: string; show
 function OutboundProjectsPanel({ project }: { project: Project }) {
   const qc = useQueryClient()
   const { data: projects = [], isLoading } = useQuery({
-    queryKey: ['outbound-projects', project.customer_uuid],
-    queryFn: () => api.get('/analytics/outbound-projects', { params: { partner_uuid: project.customer_uuid } })
+    queryKey: ['outbound-projects-settings', project.customer_uuid],
+    queryFn: () => api.get('/analytics/outbound-projects', {
+      params: { partner_uuid: project.customer_uuid, include_hidden: true },
+    })
       .then((r) => r.data.data as OutProjRow[]),
   })
   // Настройки подпроекта — в queue_settings c ключом "out:<uuid>". «Скрыть»
   // взаимоисключающе с Вход/Исход (как у входящих очередей).
   const save = useMutation({
     mutationFn: (body: any[]) => api.put(`/queue-settings/${project.customer_uuid}`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['outbound-projects', project.customer_uuid] }),
+    onSuccess: () => qc.invalidateQueries({
+      predicate: (q) => q.queryKey.includes(project.customer_uuid),
+    }),
   })
   const toggle = (p: OutProjRow, field: 'show_in' | 'show_out' | 'hidden') => {
     const sIn = p.show_in ?? false, sOut = p.show_out ?? true, sHid = p.hidden ?? false

@@ -209,8 +209,10 @@ def sync_from_naumen(
 @router.get("/sync-naumen/status")
 def sync_status(
     project_uuid: str = Query(...),
-    _=Depends(get_current_user),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
+    check_project_access(project_uuid, current_user, db)
     return _sync_jobs.get(project_uuid, {"status": "idle"})
 
 
@@ -238,6 +240,10 @@ def update_employee(emp_id: int, body: EmployeeUpdate, db: Session = Depends(get
     if emp.project_uuid:
         check_project_access(emp.project_uuid, current_user, db)
     data = body.model_dump(exclude_unset=True)
+    # Проверка исходного проекта недостаточна: без проверки нового UUID менеджер
+    # мог перенести карточку в чужой проект одним PUT-запросом.
+    if data.get("project_uuid"):
+        check_project_access(data["project_uuid"], current_user, db)
     skill_ids = data.pop("skill_ids", None)
     for k, v in data.items():
         setattr(emp, k, v)
