@@ -1,5 +1,9 @@
 # Руководство по развёртыванию WFM-платформы Телесейлз-Сервис
 
+> Канонический актуальный runbook для чистого production-сервера и ИИ-агента:
+> [SERVER_DEPLOYMENT_AGENT.md](SERVER_DEPLOYMENT_AGENT.md). Этот документ —
+> сокращённая историческая справка; при расхождении использовать новый runbook.
+
 ## Стек
 - **Backend**: Python 3.11+, FastAPI, SQLAlchemy, PostgreSQL
 - **Frontend**: Node 20+, React 18, Vite, Tailwind CSS
@@ -92,7 +96,7 @@ NCC_DB_PORT=5432
 ```bash
 cd /opt/wfm/app/backend
 source venv/bin/activate
-python run.py   # создаст таблицы и superuser admin/admin123
+python run.py   # создаст таблицы и admin с паролем FIRST_ADMIN_PASSWORD
 ```
 
 Убедитесь, что сервер запустился на порту 8000, затем остановите (`Ctrl+C`).
@@ -142,11 +146,8 @@ cd /opt/wfm/app/frontend
 npm ci
 ```
 
-Создайте файл `.env.production`:
-
-```env
-VITE_API_URL=https://wfm.yourdomain.ru/api/v1
-```
+Frontend уже использует относительный `/api/v1`; `.env.production` создавать
+не нужно.
 
 ```bash
 npm run build
@@ -288,7 +289,8 @@ sudo crontab -e
 
 ## 12. Важные замечания
 
-- SQLite используется **только в dev-режиме** (`run.py` на localhost). В продакшне — PostgreSQL через `DATABASE_URL`.
-- Backend автоматически мигрирует схему при старте (добавляет отсутствующие колонки).
+- SQLite используется **только в dev-режиме** (`run.py` на localhost). В продакшне — PostgreSQL через `WFM_DATABASE_URL`.
+- Backend создаёт отсутствующие таблицы при старте, но изменение колонок
+  существующей PostgreSQL-базы требует отдельной миграции после backup.
 - Ежедневная сверка смен с Naumen запускается в **07:00 МСК** через APScheduler.
 - Все запросы к Naumen PostgreSQL — **read-only** (SELECT only).

@@ -10,6 +10,19 @@ class Settings(BaseSettings):
 
     WFM_DATABASE_URL: str = "sqlite:///./wfm.db"
 
+    # Persistent analytics cache is a production-only feature. Even when this
+    # flag is true, the service enables it only for PostgreSQL; local SQLite is
+    # deliberately left untouched.
+    ANALYTICS_CACHE_ENABLED: bool = True
+    ANALYTICS_CACHE_TTL_SECONDS: int = 600
+    ANALYTICS_CACHE_RETENTION_DAYS: int = 31
+    ANALYTICS_CACHE_REFRESH_SCAN_SECONDS: int = 60
+
+    # Employee synchronization scans a 90-day Naumen window, so it must be
+    # considerably less frequent than analytics cache refreshes.
+    EMPLOYEE_AUTO_SYNC_ENABLED: bool = True
+    EMPLOYEE_AUTO_SYNC_MINUTES: int = 60
+
     NCC_DB_HOST: str = ""
     NCC_DB_NAME: str = "nccrep"
     NCC_DB_USER: str = "readonly"

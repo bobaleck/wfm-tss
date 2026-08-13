@@ -1,5 +1,9 @@
 # Deployment Guide — WFM Телесейлз-Сервис
 
+> Каноническая инструкция для нового production-сервера:
+> [SERVER_DEPLOYMENT_AGENT.md](SERVER_DEPLOYMENT_AGENT.md). При расхождении
+> этот краткий документ не использовать как источник истины.
+
 ## Overview
 
 | Component | Stack | Default port |

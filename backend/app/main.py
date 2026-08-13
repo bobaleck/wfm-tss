@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.core.config import settings
-from app.core.database import init_db
+from app.core.database import init_db, engine
 from app.api.v1.router import api_router
 from app.core.security import get_password_hash
 from app.core.database import SessionLocal
@@ -34,7 +34,28 @@ def startup():
     init_db()
     _seed_admin()
     _assign_orphans_to_x5()
-    _scheduler.add_job(_run_daily_reconciliation, "cron", hour=7, minute=0)
+    _scheduler.add_job(
+        _run_daily_reconciliation, "cron", hour=7, minute=0,
+        id="daily-reconciliation", replace_existing=True, max_instances=1, coalesce=True,
+    )
+    _scheduler.add_job(
+        _refresh_analytics_cache,
+        "interval",
+        seconds=max(30, settings.ANALYTICS_CACHE_REFRESH_SCAN_SECONDS),
+        id="analytics-cache-refresh",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    _scheduler.add_job(
+        _run_periodic_employee_sync,
+        "interval",
+        minutes=max(10, settings.EMPLOYEE_AUTO_SYNC_MINUTES),
+        id="employee-auto-sync",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
     _scheduler.start()
 
 
@@ -103,6 +124,52 @@ def _run_daily_reconciliation():
         db.close()
 
 
+def _refresh_analytics_cache():
+    """Refresh due production PostgreSQL snapshots; no-op for local SQLite."""
+    from app.services.analytics_cache import refresh_due_entries
+    refresh_due_entries()
+
+
+def _run_periodic_employee_sync():
+    """Persist Naumen employees for tracked projects on the production server.
+
+    The source query scans 90 days, therefore this job intentionally runs less
+    frequently than analytics refreshes and processes projects sequentially.
+    """
+    if (
+        engine.dialect.name != "postgresql"
+        or not settings.EMPLOYEE_AUTO_SYNC_ENABLED
+        or settings.EMPLOYEE_AUTO_SYNC_MINUTES <= 0
+    ):
+        return
+
+    from app.api.v1.employees import start_employee_sync
+    from app.models.audit import IntegrationSettings, TrackedProject
+
+    db = SessionLocal()
+    try:
+        integration = db.query(IntegrationSettings).first()
+        overrides = {
+            "host": integration.db_host,
+            "database": integration.db_name,
+            "user": integration.db_user,
+            "password": integration.db_password,
+            "port": integration.db_port,
+        } if integration and integration.db_host else None
+        if overrides is None and not settings.NCC_DB_HOST:
+            return
+        project_uuids = [
+            row[0] for row in db.query(TrackedProject.customer_uuid).filter(
+                TrackedProject.is_manual == 0,
+            ).all()
+        ]
+    finally:
+        db.close()
+
+    for project_uuid in project_uuids:
+        start_employee_sync(project_uuid, overrides, background=False)
+
+
 def _seed_admin():
     """Создаёт admin-пользователя при первом запуске."""
     db = SessionLocal()
@@ -169,4 +236,9 @@ def _assign_orphans_to_x5():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "WFM Телесейлз-Сервис"}
+    from app.services.analytics_cache import runtime_info
+    return {
+        "status": "ok",
+        "service": "WFM Телесейлз-Сервис",
+        "analytics_cache": runtime_info(),
+    }

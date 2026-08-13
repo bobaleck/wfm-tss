@@ -6,6 +6,7 @@ from typing import Optional, List
 from app.core.database import get_db
 from app.models.audit import QueueSetting
 from app.api.deps import get_current_user, require_admin, check_project_access
+from app.services.analytics_cache import invalidate_partner
 
 router = APIRouter()
 
@@ -73,6 +74,9 @@ def save_queue_settings(
                 hidden=item.hidden if item.hidden is not None else False,
             ))
     db.commit()
+    invalidate_partner(partner_uuid)
+    from app.api.v1.analytics import clear_local_analytics_caches
+    clear_local_analytics_caches(partner_uuid)
     return {"ok": True, "updated": len(items)}
 
 
@@ -92,4 +96,7 @@ def delete_queue_setting(
         raise HTTPException(404, detail="Не найдено")
     db.delete(row)
     db.commit()
+    invalidate_partner(partner_uuid)
+    from app.api.v1.analytics import clear_local_analytics_caches
+    clear_local_analytics_caches(partner_uuid)
     return {"ok": True}

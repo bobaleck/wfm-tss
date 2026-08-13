@@ -76,6 +76,12 @@ def _sqlite_migrate(db_engine):
 
 def init_db():
     from app.models import user, employee, team, skill, schedule, audit  # noqa
-    Base.metadata.create_all(bind=engine)
+    # Analytics snapshots belong only to the production PostgreSQL database.
+    # Excluding this table from SQLite guarantees that local wfm.db is not
+    # silently turned into a copy/cache of Naumen data.
+    tables = None
+    if engine.dialect.name == "sqlite":
+        tables = [t for t in Base.metadata.tables.values() if t.name != "analytics_cache"]
+    Base.metadata.create_all(bind=engine, tables=tables)
     if "sqlite" in settings.WFM_DATABASE_URL:
         _sqlite_migrate(engine)

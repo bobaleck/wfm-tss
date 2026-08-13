@@ -7,6 +7,7 @@ from app.api.deps import get_current_user, check_project_access, require_manager
 from app.core.database import get_db
 from app.models.audit import IntegrationSettings, QueueSetting, StatusConfig, CustomerDemand
 from app.models.employee import Employee
+from app.services.analytics_cache import cached_call
 from app.services.status_classification import build_status_sets
 import app.services.naumen_db as naumen
 
@@ -60,7 +61,20 @@ def _operator_outbound_projects_cached(partner_uuid: str, overrides: Optional[di
 _outbound_list_cache: dict[str, tuple[float, list]] = {}
 
 
-def _outbound_projects_list_cached(partner_uuid: str, overrides: Optional[dict]) -> list:
+def clear_local_analytics_caches(partner_uuid: Optional[str] = None) -> None:
+    """Drop process-local helper maps after settings or integration changes."""
+    if partner_uuid is None:
+        _queues_map_cache.clear()
+        _outbound_projects_cache.clear()
+        _outbound_list_cache.clear()
+        return
+    _outbound_list_cache.pop(partner_uuid, None)
+    for cache in (_queues_map_cache, _outbound_projects_cache):
+        for key in [key for key in cache if key[0] == partner_uuid]:
+            cache.pop(key, None)
+
+
+def _outbound_projects_memory_cached(partner_uuid: str, overrides: Optional[dict]) -> list:
     now = _time_mod.time()
     hit = _outbound_list_cache.get(partner_uuid)
     if hit and now - hit[0] < _QUEUES_MAP_TTL:
@@ -68,6 +82,16 @@ def _outbound_projects_list_cached(partner_uuid: str, overrides: Optional[dict])
     data = naumen.get_outbound_projects(partner_uuid, overrides)
     _outbound_list_cache[partner_uuid] = (now, data)
     return [dict(p) for p in data]
+
+
+def _outbound_projects_list_cached(partner_uuid: str, overrides: Optional[dict]) -> list:
+    """Shared PostgreSQL snapshot on the server, small in-memory fallback locally."""
+    return cached_call(
+        "outbound-projects",
+        partner_uuid,
+        {},
+        lambda: _outbound_projects_memory_cached(partner_uuid, overrides),
+    )
 
 
 def _hidden_inbound_queue_names(db: Session, partner_uuid: str) -> list[str]:
@@ -159,7 +183,9 @@ def _status_sets(db: Session, partner_uuid: str) -> tuple[list[str], list[str]]:
 @router.get("/projects")
 def get_projects(db: Session = Depends(get_db), _=Depends(get_current_user)):
     try:
-        return {"data": naumen.get_projects(_build_overrides(db))}
+        overrides = _build_overrides(db)
+        data = cached_call("projects", None, {}, lambda: naumen.get_projects(overrides))
+        return {"data": data}
     except Exception as e:
         raise HTTPException(503, detail=str(e))
 
@@ -173,7 +199,13 @@ def get_queues(
 ):
     check_project_access(partner_uuid, current_user, db)
     try:
-        queues = naumen.get_queues(partner_uuid, _build_overrides(db))
+        integration = _build_overrides(db)
+        queues = cached_call(
+            "queues",
+            partner_uuid,
+            {},
+            lambda: naumen.get_queues(partner_uuid, integration),
+        )
         # Apply WFM overrides (target_sl, answer_sec) + направление/видимость очереди.
         overrides = {
             r.queue_name: r
@@ -211,9 +243,16 @@ def get_workload(
     if end < begin:
         raise HTTPException(400, detail="end не может быть раньше begin")
     try:
-        data = naumen.get_workload(
-            partner_uuid, str(begin), _exclusive_end(end), interval, _build_overrides(db),
-            hidden_queue_names=_hidden_inbound_queue_names(db, partner_uuid),
+        integration = _build_overrides(db)
+        hidden = _hidden_inbound_queue_names(db, partner_uuid)
+        data = cached_call(
+            "workload",
+            partner_uuid,
+            {"begin": str(begin), "end": str(end), "interval": interval, "hidden": sorted(hidden)},
+            lambda: naumen.get_workload(
+                partner_uuid, str(begin), _exclusive_end(end), interval, integration,
+                hidden_queue_names=hidden,
+            ),
         )
         return {"data": data, "meta": {"begin": str(begin), "end": str(end), "interval": interval}}
     except Exception as e:
@@ -233,9 +272,27 @@ def get_operator_load(
         raise HTTPException(400, detail="end не может быть раньше begin")
     try:
         work_statuses, offline_statuses = _status_sets(db, partner_uuid)
-        data = naumen.get_operator_load(
-            partner_uuid, str(begin), _exclusive_end(end), work_statuses, offline_statuses, _build_overrides(db),
-            hidden_queue_names=_hidden_inbound_queue_names(db, partner_uuid),
+        integration = _build_overrides(db)
+        hidden = _hidden_inbound_queue_names(db, partner_uuid)
+        data = cached_call(
+            "operator-load",
+            partner_uuid,
+            {
+                "begin": str(begin),
+                "end": str(end),
+                "work_statuses": sorted(work_statuses),
+                "offline_statuses": sorted(offline_statuses),
+                "hidden": sorted(hidden),
+            },
+            lambda: naumen.get_operator_load(
+                partner_uuid,
+                str(begin),
+                _exclusive_end(end),
+                work_statuses,
+                offline_statuses,
+                integration,
+                hidden_queue_names=hidden,
+            ),
         )
         return {"data": data, "meta": {"begin": str(begin), "end": str(end)}}
     except Exception as e:
@@ -255,9 +312,16 @@ def get_operator_load_by_queue_ep(
     if end < begin:
         raise HTTPException(400, detail="end не может быть раньше begin")
     try:
-        data = naumen.get_operator_load_by_queue(
-            partner_uuid, str(begin), _exclusive_end(end), _build_overrides(db),
-            hidden_queue_names=_hidden_inbound_queue_names(db, partner_uuid),
+        integration = _build_overrides(db)
+        hidden = _hidden_inbound_queue_names(db, partner_uuid)
+        data = cached_call(
+            "operator-load-by-queue",
+            partner_uuid,
+            {"begin": str(begin), "end": str(end), "hidden": sorted(hidden)},
+            lambda: naumen.get_operator_load_by_queue(
+                partner_uuid, str(begin), _exclusive_end(end), integration,
+                hidden_queue_names=hidden,
+            ),
         )
         return {"data": data}
     except Exception as e:
@@ -274,9 +338,16 @@ def get_status_summary(
 ):
     check_project_access(partner_uuid, current_user, db)
     try:
-        data = naumen.get_status_summary(
-            partner_uuid, str(begin), _exclusive_end(end), _build_overrides(db),
-            hidden_queue_names=_hidden_inbound_queue_names(db, partner_uuid),
+        integration = _build_overrides(db)
+        hidden = _hidden_inbound_queue_names(db, partner_uuid)
+        data = cached_call(
+            "status-summary",
+            partner_uuid,
+            {"begin": str(begin), "end": str(end), "hidden": sorted(hidden)},
+            lambda: naumen.get_status_summary(
+                partner_uuid, str(begin), _exclusive_end(end), integration,
+                hidden_queue_names=hidden,
+            ),
         )
         return {"data": data}
     except Exception as e:
@@ -312,8 +383,25 @@ def get_operator_sessions(
 
     try:
         work_statuses, offline_statuses = _status_sets(db, partner_uuid)
-        rows = naumen.get_operator_sessions(
-            logins, str(begin), _exclusive_end(end), work_statuses, offline_statuses, _build_overrides(db),
+        integration = _build_overrides(db)
+        rows = cached_call(
+            "operator-sessions",
+            partner_uuid,
+            {
+                "begin": str(begin),
+                "end": str(end),
+                "logins": sorted(logins),
+                "work_statuses": sorted(work_statuses),
+                "offline_statuses": sorted(offline_statuses),
+            },
+            lambda: naumen.get_operator_sessions(
+                logins,
+                str(begin),
+                _exclusive_end(end),
+                work_statuses,
+                offline_statuses,
+                integration,
+            ),
         )
         for r in rows:
             r["employee_name"] = login_map.get(r.get("login"), r.get("login"))
@@ -338,10 +426,17 @@ def get_operator_timeline(
     if partner_uuid:
         check_project_access(partner_uuid, current_user, db)
     try:
+        integration = _build_overrides(db)
         if hours is not None:
-            data = naumen.get_operator_timeline_window(login, hours, _build_overrides(db))
+            # Monitoring uses this moving window and must always be live.
+            data = naumen.get_operator_timeline_window(login, hours, integration)
         elif work_date is not None:
-            data = naumen.get_operator_timeline(login, work_date, _build_overrides(db))
+            data = cached_call(
+                "operator-timeline-day",
+                partner_uuid,
+                {"login": login, "work_date": work_date},
+                lambda: naumen.get_operator_timeline(login, work_date, integration),
+            )
         else:
             raise HTTPException(400, detail="Укажите work_date или hours")
         return {"data": data}
@@ -369,7 +464,15 @@ def get_actual_operators(
     ).all()
     logins = [e.naumen_login for e in employees]
     try:
-        data = naumen.get_actual_operators_by_hour(logins, str(begin), _exclusive_end(end), _build_overrides(db))
+        integration = _build_overrides(db)
+        data = cached_call(
+            "actual-operators",
+            partner_uuid,
+            {"begin": str(begin), "end": str(end), "logins": sorted(logins)},
+            lambda: naumen.get_actual_operators_by_hour(
+                logins, str(begin), _exclusive_end(end), integration,
+            ),
+        )
         return {"data": data}
     except Exception as e:
         raise HTTPException(503, detail=str(e))
@@ -568,16 +671,37 @@ def get_actual_operators_by_queue_ep(
     if end < begin:
         raise HTTPException(400, detail="end не может быть раньше begin")
     try:
+        integration = _build_overrides(db)
         hidden_queues = _hidden_inbound_queue_names(db, partner_uuid)
-        union = naumen.get_actual_operators_union(
-            partner_uuid, str(begin), _exclusive_end(end), queues or None, _build_overrides(db),
-            hidden_queue_names=hidden_queues,
+        requested_queues = queues or None
+        result = cached_call(
+            "actual-operators-by-queue",
+            partner_uuid,
+            {
+                "begin": str(begin),
+                "end": str(end),
+                "queues": sorted(requested_queues or []),
+                "hidden": sorted(hidden_queues),
+            },
+            lambda: {
+                "data": naumen.get_actual_operators_union(
+                    partner_uuid,
+                    str(begin),
+                    _exclusive_end(end),
+                    requested_queues,
+                    integration,
+                    hidden_queue_names=hidden_queues,
+                ),
+                "by_queue": naumen.get_actual_operators_by_queue(
+                    partner_uuid,
+                    str(begin),
+                    _exclusive_end(end),
+                    integration,
+                    hidden_queue_names=hidden_queues,
+                ),
+            },
         )
-        by_queue = naumen.get_actual_operators_by_queue(
-            partner_uuid, str(begin), _exclusive_end(end), _build_overrides(db),
-            hidden_queue_names=hidden_queues,
-        )
-        return {"data": union, "by_queue": by_queue}
+        return result
     except Exception as e:
         raise HTTPException(503, detail=str(e))
 
@@ -728,8 +852,17 @@ def outbound_summary_ep(
     try:
         overrides = _build_overrides(db)
         effective_ids = _effective_outbound_project_ids(db, partner_uuid, project_ids, overrides)
-        return naumen.get_outbound_summary(
-            partner_uuid, str(begin), _exclusive_end(end), effective_ids, overrides,
+        return cached_call(
+            "outbound-summary",
+            partner_uuid,
+            {
+                "begin": str(begin),
+                "end": str(end),
+                "project_ids": None if effective_ids is None else sorted(effective_ids),
+            },
+            lambda: naumen.get_outbound_summary(
+                partner_uuid, str(begin), _exclusive_end(end), effective_ids, overrides,
+            ),
         )
     except Exception as e:
         raise HTTPException(503, detail=str(e))
@@ -751,9 +884,19 @@ def outbound_operators_ep(
     try:
         overrides = _build_overrides(db)
         effective_ids = _effective_outbound_project_ids(db, partner_uuid, project_ids, overrides)
-        return {"data": naumen.get_outbound_operator_load(
-            partner_uuid, str(begin), _exclusive_end(end), effective_ids, overrides,
-        )}
+        data = cached_call(
+            "outbound-operators",
+            partner_uuid,
+            {
+                "begin": str(begin),
+                "end": str(end),
+                "project_ids": None if effective_ids is None else sorted(effective_ids),
+            },
+            lambda: naumen.get_outbound_operator_load(
+                partner_uuid, str(begin), _exclusive_end(end), effective_ids, overrides,
+            ),
+        )
+        return {"data": data}
     except Exception as e:
         raise HTTPException(503, detail=str(e))
 
@@ -774,9 +917,19 @@ def outbound_load_ep(
     try:
         overrides = _build_overrides(db)
         effective_ids = _effective_outbound_project_ids(db, partner_uuid, project_ids, overrides)
-        return {"data": naumen.get_outbound_load_by_hour(
-            partner_uuid, str(begin), _exclusive_end(end), effective_ids, overrides,
-        )}
+        data = cached_call(
+            "outbound-load",
+            partner_uuid,
+            {
+                "begin": str(begin),
+                "end": str(end),
+                "project_ids": None if effective_ids is None else sorted(effective_ids),
+            },
+            lambda: naumen.get_outbound_load_by_hour(
+                partner_uuid, str(begin), _exclusive_end(end), effective_ids, overrides,
+            ),
+        )
+        return {"data": data}
     except Exception as e:
         raise HTTPException(503, detail=str(e))
 

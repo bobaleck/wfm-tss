@@ -97,6 +97,26 @@ class CustomerDemand(Base):
     uploaded_at = Column(DateTime, server_default=func.now())
 
 
+class AnalyticsCache(Base):
+    """Persistent shared cache of historical Naumen analytics.
+
+    The table is created only for the production PostgreSQL WFM database.
+    Local SQLite explicitly excludes it in ``init_db`` so development data is
+    never used as an analytics warehouse.
+    """
+    __tablename__ = "analytics_cache"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cache_key = Column(String(64), unique=True, nullable=False, index=True)
+    namespace = Column(String(80), nullable=False, index=True)
+    partner_uuid = Column(String(100), nullable=True, index=True)
+    payload = Column(JSON, nullable=False)
+    fetched_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    last_accessed_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    last_error = Column(String(500), nullable=True)
+
+
 class UserProject(Base):
     """Maps users (project_manager / customer roles) to their allowed projects."""
     __tablename__ = "user_projects"

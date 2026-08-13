@@ -1,5 +1,9 @@
 # Деплой WFM «Телесейлз-Сервис» — runbook для ИИ-агента
 
+> Внимание: каноническая инструкция для нового пустого сервера теперь находится
+> в [SERVER_DEPLOYMENT_AGENT.md](SERVER_DEPLOYMENT_AGENT.md). При любом
+> расхождении использовать её. Этот файл сохранён как историческая справка.
+
 Цель: развернуть/обновить платформу на Linux-сервере (Ubuntu 22.04/Debian 12) с
 нуля или накатить обновление. Документ самодостаточен и рассчитан на автономного
 агента: команды идемпотентны, после каждого блока — как проверить успех.
@@ -140,8 +144,7 @@ curl -fsS http://127.0.0.1:8000/health   # ожидаем {"status":"ok",...}
 ```bash
 cd /opt/wfm/app/frontend
 npm ci
-# при необходимости задать адрес API:
-echo 'VITE_API_URL=https://wfm.yourdomain.ru/api/v1' > .env.production
+# Клиент уже использует относительный /api/v1; .env.production не нужен.
 npm run build           # → frontend/dist
 sudo chown -R www-data:www-data dist
 ```
@@ -213,8 +216,9 @@ PYTHONPATH=. ./venv/bin/python -c "import app.main" && curl -fsS http://127.0.0.
 cd /opt/wfm/app/frontend && npm ci && npm run build
 sudo chown -R www-data:www-data dist && sudo systemctl reload nginx
 ```
-Схема БД мигрируется автоматически на старте (новые колонки добавляются;
-существующие данные не теряются).
+На старте автоматически создаются отсутствующие таблицы. `create_all` не
+добавляет колонки в существующие PostgreSQL-таблицы: перед таким релизом нужны
+backup и адресная миграция из канонического runbook.
 
 ---
 

@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.models.audit import IntegrationSettings, TrackedProject
 from app.api.deps import require_admin, get_current_user, get_user_project_uuids
 from app.models.user import User
+from app.services.analytics_cache import invalidate_all, invalidate_partner
 import app.services.naumen_db as naumen
 
 router = APIRouter()
@@ -89,6 +90,9 @@ def save_integration(body: IntegrationSettingsIn, db: Session = Depends(get_db),
         if v is not None:
             setattr(settings, k, v)
     db.commit()
+    invalidate_all()
+    from app.api.v1.analytics import clear_local_analytics_caches
+    clear_local_analytics_caches()
     return {"ok": True, "message": "Настройки сохранены"}
 
 
@@ -189,6 +193,7 @@ def update_tracked_project(uuid: str, body: TrackedProjectIn, db: Session = Depe
     if body.work_end is not None:
         project.work_end = body.work_end
     db.commit()
+    invalidate_partner(uuid)
     return {"ok": True}
 
 
@@ -213,6 +218,7 @@ def add_tracked_project(body: TrackedProjectIn, db: Session = Depends(get_db), _
     )
     db.add(project)
     db.commit()
+    invalidate_partner(project.customer_uuid)
     return {"ok": True, "customer_uuid": project.customer_uuid}
 
 
@@ -223,3 +229,4 @@ def remove_tracked_project(uuid: str, db: Session = Depends(get_db), _=Depends(r
         raise HTTPException(404, detail="Не найден")
     db.delete(project)
     db.commit()
+    invalidate_partner(uuid)

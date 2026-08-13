@@ -24,6 +24,7 @@ router = APIRouter()
 # опрашивает /sync-naumen/status. Процесс однопроцессный (uvicorn без
 # воркеров), поэтому module-level dict достаточен — отдельное хранилище не нужно.
 _sync_jobs: dict[str, dict] = {}
+_sync_jobs_lock = threading.Lock()
 
 
 def _enrich(emp: Employee) -> dict:
@@ -183,6 +184,26 @@ def _run_sync(project_uuid: str, overrides: Optional[dict]):
         db.close()
 
 
+def start_employee_sync(project_uuid: str, overrides: Optional[dict], background: bool = True) -> bool:
+    """Start one project sync if it is not already running.
+
+    HTTP uses a daemon thread; the production scheduler uses the blocking mode
+    so projects are processed sequentially and do not hammer Naumen in parallel.
+    """
+    with _sync_jobs_lock:
+        if _sync_jobs.get(project_uuid, {}).get("status") == "running":
+            return False
+        _sync_jobs[project_uuid] = {
+            "status": "running",
+            "started_at": datetime.utcnow().isoformat(),
+        }
+    if background:
+        threading.Thread(target=_run_sync, args=(project_uuid, overrides), daemon=True).start()
+    else:
+        _run_sync(project_uuid, overrides)
+    return True
+
+
 @router.post("/sync-naumen")
 def sync_from_naumen(
     project_uuid: str = Query(..., description="UUID партнёра (customer_uuid)"),
@@ -197,12 +218,9 @@ def sync_from_naumen(
     непрактично (таймауты браузера/прокси, занятый поток и connection pool).
     Прогресс — через GET /sync-naumen/status. Правила сопоставления — см. docstring _run_sync.
     """
-    if _sync_jobs.get(project_uuid, {}).get("status") == "running":
-        return {"status": "running"}
-
     overrides = _build_overrides(db)
-    _sync_jobs[project_uuid] = {"status": "running", "started_at": datetime.utcnow().isoformat()}
-    threading.Thread(target=_run_sync, args=(project_uuid, overrides), daemon=True).start()
+    if not start_employee_sync(project_uuid, overrides, background=True):
+        return {"status": "running"}
     return {"status": "running"}
 
 

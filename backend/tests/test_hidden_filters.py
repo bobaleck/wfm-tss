@@ -85,10 +85,17 @@ class HiddenQueueApiTests(unittest.TestCase):
         self.admin = User(id=1, username="admin", role="admin", is_superuser=True)
         self.overrides_patch = patch.object(analytics, "_build_overrides", return_value=None)
         self.overrides_patch.start()
+        self.cache_patch = patch.object(
+            analytics,
+            "cached_call",
+            side_effect=lambda _namespace, _partner, _params, compute: compute(),
+        )
+        self.cache_patch.start()
         analytics._outbound_list_cache.clear()
 
     def tearDown(self):
         self.overrides_patch.stop()
+        self.cache_patch.stop()
         self.db.close()
         self.engine.dispose()
         analytics._outbound_list_cache.clear()

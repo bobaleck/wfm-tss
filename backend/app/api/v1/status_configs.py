@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.models.audit import StatusConfig, IntegrationSettings
 from app.api.deps import get_current_user, require_admin, check_project_access
 from app.services.status_classification import is_standard, standard_group
+from app.services.analytics_cache import invalidate_partner
 import app.services.naumen_db as naumen
 
 router = APIRouter()
@@ -105,6 +106,7 @@ def upsert_config(
         )
         db.add(cfg)
     db.commit()
+    invalidate_partner(partner_uuid)
     return {"ok": True, "status_name": status_name, "classification": body.classification}
 
 
@@ -124,4 +126,5 @@ def delete_config(
         raise HTTPException(404, detail="Не найдено")
     db.delete(cfg)
     db.commit()
+    invalidate_partner(partner_uuid)
     return {"ok": True}

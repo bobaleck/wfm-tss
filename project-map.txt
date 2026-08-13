@@ -1,0 +1,1079 @@
+WFM TELESALES — АКТУАЛЬНАЯ КАРТА ПРОЕКТА
+========================================
+
+Файл: C:\Users\robokoll\Desktop\dbeaver\wfm-telesales\project-map.txt
+Прежнее имя: fast-links-ft.txt (БОЛЬШЕ НЕ ИСПОЛЬЗУЕТСЯ)
+Версия карты: 2026-08-13
+Карта входит в Git-репозиторий и публикуется вместе с кодом.
+
+
+0. ГЛАВНОЕ ПРАВИЛО ДЛЯ ЛЮБОГО АГЕНТА
+====================================
+
+ЭТОТ ФАЙЛ — ЕДИНСТВЕННАЯ ТОЧКА ВХОДА В ПРОЕКТ.
+
+Перед любой задачей:
+  1) прочитать project-map.txt полностью;
+  2) определить тип задачи по разделу 3;
+  3) открыть только перечисленные там инструкции и файлы кода;
+  4) не перечитывать весь WFM_instruction_pack без явной необходимости;
+  5) проверить Git-состояние до изменений;
+  6) после изменений выполнить проверки из раздела 15.
+
+ОБЯЗАТЕЛЬНОЕ ПРАВИЛО АКТУАЛЬНОСТИ:
+  ЛЮБЫЕ ПРАВКИ САЙТА, BACKEND, FRONTEND, API, SQL, СХЕМЫ ЛОКАЛЬНОЙ БД,
+  БИЗНЕС-ПРАВИЛ, ИНСТРУКЦИЙ, ЗАВИСИМОСТЕЙ, ЗАПУСКА, ДЕПЛОЯ ИЛИ GIT-ПРОЦЕССА
+  ДОЛЖНЫ В ТОЙ ЖЕ ЗАДАЧЕ БЫТЬ ОТРАЖЕНЫ В project-map.txt.
+
+  Если изменение влияет на маршрут поиска, архитектуру, данные, команды,
+  проверки, ограничения или известное состояние проекта, задача НЕ считается
+  завершённой, пока project-map.txt не обновлён и не перепроверен.
+
+  project-map.txt (бывший fast-links-ft.txt) должен всегда оставаться полностью
+  актуальной картой проекта. Нельзя создавать рядом вторую конкурирующую карту.
+
+Границы карты:
+  - карта объясняет, ЧТО читать и ГДЕ менять;
+  - узкие SQL-детали остаются в адресных файлах WFM_instruction_pack;
+  - текущий код является источником истины о фактической реализации;
+  - подтверждённые бизнес-определения из WFM_instruction_pack имеют приоритет
+    над случайными комментариями и старыми handoff-файлами.
+
+
+1. НЕИЗМЕНЯЕМЫЕ ИСХОДНЫЕ УСЛОВИЯ
+================================
+
+Рабочий корень:
+  C:\Users\robokoll\Desktop\dbeaver
+
+Приложение и единственный рабочий Git-репозиторий:
+  C:\Users\robokoll\Desktop\dbeaver\wfm-telesales
+
+Инструкции по Naumen, SQL, метрикам и сайту:
+  C:\Users\robokoll\Desktop\dbeaver\WFM_instruction_pack
+
+Из каталога Git-репозитория этот же путь: `..\WFM_instruction_pack`.
+`WFM_instruction_pack` не входит в GitHub. На чистом production-сервере он не
+нужен для развёртывания: агент читает project-map.txt и
+SERVER_DEPLOYMENT_AGENT.md. Для изменения SQL/метрик Naumen пакет должен быть
+передан агенту отдельно; без него такие изменения не выполнять.
+
+Пользователь может называть эту директорию просто `instructions`, но её
+фактическое имя на диске — `WFM_instruction_pack`. Не переименовывать её без
+отдельной задачи: внутренние ссылки и этот файл используют текущее имя.
+
+NAUMEN ДЛЯ АГЕНТА НЕДОСТУПЕН.
+  - Не пытаться подключаться к PostgreSQL/REST Naumen.
+  - Не ждать восстановления сети и не повторять сетевые проверки.
+  - Не запускать запросы на Naumen из backend\.env.
+  - Для работы использовать только WFM_instruction_pack, текущий SQL в
+    backend\app\services\naumen_db.py и локальные тесты/моки.
+  - Изменение SQL, требующее проверки на живых данных, разрешается подготовить,
+    но результат помечается «структурно проверен, нужна проверка куратором».
+  - Никогда не писать, что метрика подтверждена живой БД, если агент её не видел.
+
+Удалённый Git:
+  origin = git@github.com:bobaleck/wfm-tss.git
+  основная ветка = main
+
+Git в корне dbeaver не работает. Все Git-команды выполнять только из:
+  C:\Users\robokoll\Desktop\dbeaver\wfm-telesales
+
+project-map.txt лежит в корне wfm-telesales, входит в Git-репозиторий и должен
+публиковаться в GitHub в том же коммите, что связанные правки кода/инструкций.
+
+Секреты:
+  wfm-telesales\backend\.env — локальный секретный файл;
+  wfm-telesales\backend\wfm.db — локальные рабочие данные;
+  оба файла игнорируются Git и не должны попадать в ответы/логи/diff.
+
+
+2. ИЕРАРХИЯ ИСТОЧНИКОВ ИСТИНЫ
+=============================
+
+Для фактической реализации:
+  1) текущий код wfm-telesales;
+  2) автоматические тесты;
+  3) project-map.txt как навигация;
+  4) старые аудиты — только исторический контекст.
+
+Для формул и семантики Naumen:
+  1) подтверждённый канон WFM_instruction_pack\00_master_instruction.md;
+  2) WFM_instruction_pack\02_metrics_glossary.md;
+  3) адресные правила 01/03/05/08/09/10;
+  4) текущий SQL сайта — реализация, которую надо сверять с каноном;
+  5) старые корневые query/WFM/handoff-файлы — не канон.
+
+При конфликте кода и инструкции:
+  - не исправлять молча;
+  - определить, что устарело;
+  - если меняется код — добавить/обновить тест;
+  - если меняется подтверждённое правило — обновить соответствующую инструкцию;
+  - обязательно обновить project-map.txt.
+
+Исторические файлы в корне dbeaver:
+  wfm-telesales_code_audit.md, wfm-telesales_code_audit_2.md
+    -> результаты аудита июня 2026; выводы могут быть уже исправлены;
+  WORK_CONTINUE.md, tutorial_update.md, last_update_info_190626.md
+    -> старые handoff/снимки состояния;
+  WFM.txt, WFM2.txt, wfm3.txt, wfm4.txt, Планы.txt
+    -> исходные пожелания и история запросов пользователя;
+  query.md, operator_sessions_query.txt
+    -> старые/вспомогательные SQL-материалы вне канонического пака;
+  *.xlsx, *.docx
+    -> входные требования, планы и примеры данных;
+  log_back.txt
+    -> потенциально чувствительный исторический файл; не читать и не выводить
+       без прямой необходимости, не коммитить.
+
+Эти файлы открывать только если новая задача прямо ссылается на них или нужно
+восстановить происхождение требования. Для обычной правки они не нужны.
+
+
+3. МАРШРУТИЗАТОР ЗАДАЧ: ЧТО ЧИТАТЬ И КУДА ИДТИ
+==============================================
+
+3.1. Обычная правка интерфейса без изменения метрик
+--------------------------------------------------
+Читать:
+  project-map.txt;
+  конкретную страницу из frontend\src\pages;
+  используемые ею компоненты;
+  её api.get/api.post/api.put/api.delete вызовы.
+
+Код:
+  frontend\src\pages\...
+  frontend\src\components\...
+  frontend\src\types\index.ts
+  frontend\src\App.tsx — только если меняется маршрут
+  frontend\src\components\layout\Sidebar.tsx — только если меняется меню/роль
+
+Не читать WFM_instruction_pack, если формулы и Naumen-данные не меняются.
+
+Проверки:
+  npm run build;
+  браузерный сценарий изменённого экрана;
+  роли/адаптивность/пустые состояния по области изменения.
+
+
+3.2. Изменение frontend API-вызова или контракта ответа
+-----------------------------------------------------
+Читать:
+  страницу/компонент;
+  frontend\src\api\client.ts;
+  frontend\src\types\index.ts;
+  соответствующий backend\app\api\v1\*.py;
+  соответствующую Pydantic-схему backend\app\schemas\*.py.
+
+Если endpoint аналитический — дополнительно раздел 3.6, 3.7 или 3.8.
+
+
+3.3. Авторизация, роли и проектная изоляция
+------------------------------------------
+Читать:
+  backend\app\api\deps.py
+  backend\app\api\v1\auth.py
+  backend\app\api\v1\users.py
+  backend\app\models\user.py
+  backend\app\models\audit.py (UserProject)
+  frontend\src\store\auth.ts
+  frontend\src\store\project.ts
+  frontend\src\types\index.ts (ROLE_ALLOWED_SECTIONS)
+  frontend\src\components\layout\Sidebar.tsx
+
+Правила:
+  - полный доступ ко всем проектам: admin, analyst, is_superuser;
+  - остальные роли видят только назначения user_projects;
+  - любой project-scoped endpoint вызывает check_project_access или
+    resolve_project_scope;
+  - при переносе сущности проверять исходный и новый project_uuid;
+  - скрытие пункта меню не заменяет backend-проверку.
+
+Проверять минимум:
+  admin + одна ограниченная роль;
+  список без project_uuid;
+  прямой запрос чужого UUID;
+  перенос сущности в чужой проект;
+  смену active_project_uuid.
+
+
+3.4. Локальные настройки проекта/очередей/статусов
+-------------------------------------------------
+Читать:
+  backend\app\api\v1\queue_settings.py
+  backend\app\api\v1\status_configs.py
+  backend\app\api\v1\integrations.py
+  backend\app\models\audit.py
+  frontend\src\pages\settings\ProjectSettingsPage.tsx
+  frontend\src\pages\StatusesPage.tsx
+  frontend\src\pages\IntegrationsPage.tsx
+
+Для hidden дополнительно:
+  backend\app\api\v1\analytics.py
+  backend\app\services\naumen_db.py
+  frontend\src\pages\analytics\outboundShared.tsx
+  backend\tests\test_hidden_filters.py
+
+
+3.5. Сотрудники, команды и навыки
+---------------------------------
+Читать:
+  backend\app\api\v1\employees.py / teams.py / skills.py
+  backend\app\models\employee.py / team.py / skill.py
+  backend\app\schemas\employee.py / team.py / skill.py
+  frontend\src\pages\team\EmployeesPage.tsx
+  frontend\src\pages\team\TeamsPage.tsx
+  frontend\src\pages\team\SkillsPage.tsx
+  frontend\src\components\team\EmployeeDetailPanel.tsx
+
+Если меняется синхронизация Naumen:
+  WFM_instruction_pack\query.md, только раздел 8;
+  WFM_instruction_pack\08_current_approach_review.md, A1–A4;
+  backend\app\services\naumen_db.py:
+    get_naumen_employees, sync_employees_for_partner.
+
+Особенность:
+  состояние фоновой синхронизации хранится в памяти `_sync_jobs` и запускается
+  thread. На production PostgreSQL scheduler вызывает синхронизацию всех
+  не ручных tracked projects последовательно раз в 60 минут. Запрос читает
+  90-дневное окно Naumen, поэтому не сокращать период до 10 минут без замера
+  нагрузки. Backend должен работать с одним uvicorn worker.
+
+
+3.6. Входящая аналитика и KPI очередей
+-------------------------------------
+Читать только:
+  WFM_instruction_pack\02_metrics_glossary.md — группа 6;
+  WFM_instruction_pack\07_site_reports_catalog.md — нужный экран/API;
+  WFM_instruction_pack\08_current_approach_review.md — A1, A2, A5, A6;
+  WFM_instruction_pack\05_common_pitfalls.md — 4, 5, 12, 17–20, 26;
+  WFM_instruction_pack\03_query_patterns.md — P9, P10, P13;
+  WFM_instruction_pack\query.md — только функция, которую меняют;
+  при вопросе о колонке: 10_data_dictionary.json или .md.
+
+Код:
+  backend\app\api\v1\analytics.py
+  backend\app\services\naumen_db.py
+  frontend\src\pages\analytics\QueuesPage.tsx
+  frontend\src\pages\analytics\WorkloadPage.tsx
+  frontend\src\pages\analytics\OperatorLoadPage.tsx
+  frontend\src\pages\analytics\IntradayPage.tsx
+  frontend\src\utils\sl.ts
+
+Не читать весь instruction pack.
+
+
+3.7. Статусы, сессии, live и фактические операторы
+-------------------------------------------------
+Читать только:
+  WFM_instruction_pack\02_metrics_glossary.md — группы 2 и 8;
+  WFM_instruction_pack\03_query_patterns.md — P3, P4, P5, P14;
+  WFM_instruction_pack\05_common_pitfalls.md — 22, 24, 26, 28;
+  WFM_instruction_pack\09_proposed_metrics.md — B и J;
+  WFM_instruction_pack\query.md — разделы 6, 9–14;
+  WFM_instruction_pack\08_current_approach_review.md — A3, A4.
+
+Код:
+  backend\app\services\naumen_db.py
+  backend\app\services\status_classification.py
+  backend\app\api\v1\analytics.py
+  backend\app\api\v1\status_configs.py
+  frontend\src\pages\analytics\LivePage.tsx
+  frontend\src\pages\analytics\MonitoringStats.tsx
+  frontend\src\components\StatusTimeline.tsx
+  frontend\src\utils\statusClassification.ts
+
+Осторожно:
+  текущий код в ряде функций читает `status_changes`, а канон пака предпочитает
+  `status_changes_ms`. Не делать массовую замену без живой проверки куратором.
+
+
+3.8. Исходящая аналитика
+------------------------
+Читать только:
+  WFM_instruction_pack\02_metrics_glossary.md — группы 1 и 9;
+  WFM_instruction_pack\03_query_patterns.md — P1, P11, P12, P15;
+  WFM_instruction_pack\05_common_pitfalls.md — 13, 14, 25, 26;
+  WFM_instruction_pack\09_proposed_metrics.md — C, E, I;
+  WFM_instruction_pack\10_data_dictionary.* — только нужные таблицы/поля.
+
+Код:
+  backend\app\api\v1\analytics.py — outbound endpoints;
+  backend\app\services\naumen_db.py — get_*outbound*;
+  frontend\src\pages\analytics\OutboundPage.tsx
+  frontend\src\pages\analytics\OutboundOperatorsPage.tsx
+  frontend\src\pages\analytics\OutboundLoadPage.tsx
+  frontend\src\pages\analytics\OutboundMonitoringStats.tsx
+  frontend\src\pages\analytics\outboundShared.tsx
+
+
+3.9. Прогноз потребности / Erlang C / загрузка Excel
+---------------------------------------------------
+Читать:
+  frontend\src\pages\analytics\StaffingPage.tsx
+  frontend\src\utils\erlang.ts
+  backend\app\api\v1\analytics.py — customer-demand и actual operators;
+  backend\app\models\audit.py — CustomerDemand;
+  WFM_instruction_pack\07_site_reports_catalog.md — Staffing;
+  инструкции из 3.6/3.7 только если меняется источник факта.
+
+Проверять:
+  inclusive диапазон UI и exclusive SQL end;
+  один оператор в нескольких очередях считается один раз в union;
+  пустой Excel, дубли день/час, часы 0–23, отрицательные значения.
+
+
+3.10. Графики, смены, отсутствия и отчёты
+-----------------------------------------
+Читать:
+  backend\app\api\v1\schedules.py
+  backend\app\models\schedule.py
+  backend\app\schemas\schedule.py
+  frontend\src\pages\worktime\SchedulesPage.tsx
+  frontend\src\pages\worktime\ShiftsPage.tsx
+  frontend\src\pages\worktime\AbsencesPage.tsx
+  frontend\src\components\worktime\ShiftAssignModal.tsx
+  frontend\src\pages\ReportsPage.tsx
+
+Если используются сессии Naumen — дополнительно раздел 3.7.
+
+Правила:
+  графики проектные;
+  смена принадлежит проекту через employee.project_uuid;
+  line/queue_names связывают смену с входом/исходом и очередями;
+  reconcile зависит от Naumen и без него не подтверждается;
+  export.xlsx проверять на пустом и непустом диапазоне.
+
+
+3.11. Новая метрика или новый отчёт Naumen
+------------------------------------------
+Читать в таком порядке:
+  1) WFM_instruction_pack\00_master_instruction.md;
+  2) 02_metrics_glossary.md — нужная метрика;
+  3) 01_schema_map.md — связи;
+  4) 10_data_dictionary.json — точные поля;
+  5) 03_query_patterns.md — ближайший каркас;
+  6) 05_common_pitfalls.md — финальный чек;
+  7) 07_site_reports_catalog.md — ожидаемый контракт сайта;
+  8) 09_proposed_metrics.md — если это развитие;
+  9) 06_verification_workflow.md — только чтобы подготовить куратору план
+     живой проверки, а не выполнять её самому.
+
+Результат без Naumen:
+  код + структурный тест SQL + список контрольных значений для куратора;
+  статус «требует проверки на живой БД».
+
+
+3.12. Схема или неизвестная колонка Naumen
+------------------------------------------
+Начинать с:
+  WFM_instruction_pack\10_data_dictionary.json — машинный поиск;
+  или 10_data_dictionary.md — чтение глазами;
+  затем 01_schema_map.md для логических связей.
+
+Не искать отсутствующие ncc_schema.md/PDF/REST-документ: их нет в workspace.
+
+
+3.13. Локальная БД, модель или миграция
+--------------------------------------
+Читать:
+  backend\app\core\database.py
+  backend\app\models\*.py
+  backend\app\schemas\*.py
+  конкретный API-файл.
+
+Текущее состояние:
+  SQLAlchemy create_all + ручные SQLite ALTER в `_sqlite_migrate`;
+  Alembic установлен, но полноценный migration tree не является текущим путём;
+  новую колонку надо добавить в model/schema/API/frontend type и миграцию SQLite;
+  существующие данные нельзя удалять или пересоздавать без отдельного разрешения.
+
+
+3.14. Деплой, конфигурация, зависимости или GitHub
+-------------------------------------------------
+Деплой:
+  SERVER_DEPLOYMENT_AGENT.md — ЕДИНСТВЕННЫЙ канонический runbook для чистого
+    production-сервера и автономного ИИ-агента;
+  DEPLOY_AI_AGENT.md, DEPLOY.md, DEPLOYMENT.md — старые справочные документы;
+    при конфликте всегда использовать SERVER_DEPLOYMENT_AGENT.md;
+  backend\.env.example и backend\app\core\config.py.
+
+Зависимости:
+  backend\requirements.txt;
+  frontend\package.json;
+  frontend\package-lock.json.
+
+Git:
+  раздел 16 этой карты.
+
+
+3.15. Серверный кэш аналитики и фоновые обновления
+--------------------------------------------------
+Читать:
+  backend\app\services\analytics_cache.py
+  backend\app\models\audit.py (AnalyticsCache)
+  backend\app\core\config.py и database.py
+  backend\app\main.py
+  backend\app\api\v1\analytics.py
+  backend\tests\test_analytics_cache.py
+  SERVER_DEPLOYMENT_AGENT.md, разделы 2, 8–10 и 14.
+
+Инварианты:
+  - persistent cache работает только при WFM_DATABASE_URL=PostgreSQL;
+  - SQLite всегда обходит cache, таблица analytics_cache в wfm.db не создаётся;
+  - TTL по умолчанию 600 секунд, retention 31 день;
+  - ключ — SHA-256 от namespace/project/параметров; параметры и секреты в
+    таблице не хранятся;
+  - stale snapshot возвращается при временной ошибке, пока идёт один refresh;
+  - изменения очередей, статусов и интеграции инвалидируют связанные снимки;
+  - current/recent monitoring endpoints никогда не заворачивать в cached_call;
+  - один worker обязателен из-за APScheduler и in-process registry.
+
+
+4. АРХИТЕКТУРА ПРИЛОЖЕНИЯ
+=========================
+
+Frontend:
+  React 18, TypeScript, Vite, React Router 6, React Query 5, Zustand,
+  Tailwind CSS, Recharts, Axios, date-fns.
+
+Backend:
+  Python 3.11, FastAPI, SQLAlchemy, Pydantic, JWT, Uvicorn, psycopg2,
+  pandas/openpyxl, APScheduler.
+
+Хранилища:
+  разработка на этом ПК: SQLite backend\wfm.db, не использовать как серверное
+    хранилище и не добавлять в неё analytics_cache;
+  production-сервер: PostgreSQL WFM (`WFM_DATABASE_URL`), проекты, сотрудники,
+    настройки, графики и общий cache исторической аналитики;
+  внешняя статистика: PostgreSQL Naumen/NCC (read-only, агенту недоступна);
+  внешнее Naumen REST API: настройки/тест интеграции (агенту недоступно).
+
+Поток запроса:
+  Локально Browser :5173; production Browser :443 через Nginx
+    -> frontend\src\api\client.ts
+    -> Vite proxy /api локально или Nginx /api production
+    -> FastAPI :8000/api/v1
+    -> SQLAlchemy Session к WFM DB
+    -> historical cached_call к PostgreSQL WFM
+    -> при cache miss/refresh либо live — read-only psycopg2 к Naumen.
+
+Особенности:
+  - API сессия БД держится во время некоторых медленных вызовов Naumen;
+  - пул SQLAlchemy расширен до pool_size=20/max_overflow=40;
+  - исторический cache на production живёт в PostgreSQL и общий для всех;
+  - вспомогательные карты очередей/исходящих проектов живут в памяти процесса;
+  - `_sync_jobs` также живёт в памяти;
+  - production запускается с `--workers 1`.
+
+
+5. ДЕРЕВО ПРОЕКТА
+=================
+
+dbeaver\
+  WFM_instruction_pack\             канон Naumen/SQL/метрик
+    README.md                        индекс пака
+    00_master_instruction.md         общий канон и алгоритм
+    01_schema_map.md                 связи и домены NCC
+    02_metrics_glossary.md           формулы метрик
+    03_query_patterns.md             SQL-каркасы P1–P15
+    04_query_library\00_index.md     стиль и реальные паттерны автора
+    05_common_pitfalls.md            запреты и частые ошибки
+    06_verification_workflow.md       план живой проверки для куратора
+    07_site_reports_catalog.md       карта сайта/метрик/API (может отставать)
+    08_current_approach_review.md     ревью SQL сайта и расхождения
+    09_proposed_metrics.md            развитие метрик
+    10_data_dictionary.json          70 таблиц / 655 полей, машинный канон
+    10_data_dictionary.md            человекочитаемое зеркало
+    query.md                         описание функций naumen_db.py
+  wfm-telesales\                    приложение и Git repo
+    project-map.txt                  эта карта, читать первой; хранится в Git
+    backend\
+      app\
+        api\deps.py                  auth, роли, проектный scope
+        api\v1\*.py                 HTTP endpoints
+        core\config.py               env-настройки
+        core\database.py             engine, session, init/migrate
+        core\security.py             password/JWT
+        models\*.py                  SQLAlchemy local DB
+        schemas\*.py                 Pydantic API contracts
+        services\naumen_db.py        весь SQL к Naumen
+        services\analytics_cache.py  PostgreSQL-only cache исторических API
+        services\status_classification.py
+        main.py                       FastAPI app, startup, seed, scheduler
+      tests\test_hidden_filters.py   hidden SQL/API tests
+      tests\test_analytics_cache.py  cache/SQLite isolation tests
+      .env.example                   шаблон конфигурации
+      .env                           секреты, Git ignored
+      wfm.db                         локальные данные, Git ignored
+      requirements.txt
+      run.py
+    frontend\
+      src\App.tsx                    маршруты/PrivateRoute
+      src\api\client.ts             Axios/JWT/401
+      src\components\               общие UI-блоки
+      src\pages\                    страницы
+      src\store\                    auth и active project
+      src\types\index.ts            доменные TS-типы/роли
+      src\utils\                    SL/Erlang/status helpers
+      package.json / package-lock.json
+      vite.config.ts
+    DEPLOY.md
+    DEPLOYMENT.md
+    DEPLOY_AI_AGENT.md
+    SERVER_DEPLOYMENT_AGENT.md       канонический clean-server runbook
+    start.bat / start-backend.bat / start-frontend.bat
+
+В проекте 116 файлов без node_modules/dist/venv на момент снимка 2026-08-13.
+
+
+6. КАРТА FRONTEND-МАРШРУТОВ
+===========================
+
+Маршруты определены в frontend\src\App.tsx.
+Меню и видимость по ролям — frontend\src\components\layout\Sidebar.tsx.
+
+Public:
+  /login                         pages\auth\LoginPage.tsx
+
+Private:
+  /dashboard                     pages\dashboard\DashboardPage.tsx
+  /analytics/live                pages\analytics\LivePage.tsx
+  /team/employees                pages\team\EmployeesPage.tsx
+  /team/teams                    pages\team\TeamsPage.tsx
+  /team/skills                   pages\team\SkillsPage.tsx
+  /analytics/queues              pages\analytics\QueuesPage.tsx
+  /analytics/workload            pages\analytics\WorkloadPage.tsx
+  /analytics/operator-load       pages\analytics\OperatorLoadPage.tsx
+  /analytics/intraday            pages\analytics\IntradayPage.tsx
+  /analytics/staffing            pages\analytics\StaffingPage.tsx
+  /analytics/outbound            pages\analytics\OutboundPage.tsx
+  /analytics/outbound/operators  pages\analytics\OutboundOperatorsPage.tsx
+  /analytics/outbound/load       pages\analytics\OutboundLoadPage.tsx
+  /worktime/schedules            pages\worktime\SchedulesPage.tsx
+  /worktime/absences             pages\worktime\AbsencesPage.tsx
+  /worktime/shifts               pages\worktime\ShiftsPage.tsx
+  /reports                       pages\ReportsPage.tsx
+  /settings                      pages\SettingsPage.tsx
+  /settings/projects             pages\settings\ProjectSettingsPage.tsx
+  /statuses                      pages\StatusesPage.tsx
+  /users                         pages\UsersPage.tsx
+  /journal                       pages\JournalPage.tsx
+  /integrations                  pages\IntegrationsPage.tsx
+  /about                         pages\AboutPage.tsx
+  /docs                          pages\DocsPage.tsx
+
+Навигация аналитики зависит от activeProject.has_inbound/has_outbound.
+PrivateRoute проверяет и token, и загруженного user.
+
+Роли и разрешённые секции находятся только в types/index.ts:
+  admin            всё;
+  project_manager  dashboard/team/analytics/worktime/reports/about/docs;
+  analyst          dashboard/analytics/reports/about/docs;
+  hr               dashboard/team/worktime/reports/about/docs;
+  customer         dashboard/analytics/about;
+  viewer           dashboard/analytics/about.
+
+
+7. КАРТА BACKEND API
+====================
+
+Базовый prefix: /api/v1
+Регистрация: backend\app\api\v1\router.py
+Swagger при локальном запуске: http://localhost:8000/docs
+Health: GET /health, включая runtime analytics_cache (enabled/backend/TTL/retention)
+
+auth.py — /auth
+  POST /login
+  GET  /me
+  PUT  /me/project
+
+users.py — /users (admin)
+  CRUD пользователей;
+  GET/POST /{user_id}/projects;
+  DELETE /{user_id}/projects/{project_uuid}.
+
+employees.py — /employees
+  CRUD сотрудников;
+  POST /sync-naumen;
+  GET /sync-naumen/status.
+
+teams.py — /teams
+  CRUD команд;
+  GET /tree.
+
+skills.py — /skills
+  CRUD навыков;
+  POST /seed.
+
+analytics.py — /analytics
+  проекты/очереди:
+    GET /projects, /queues, /outbound-projects;
+  входящая аналитика:
+    GET /workload, /operator-load, /operator-load-by-queue, /status-summary;
+  статусы/операторы:
+    GET /operator-sessions, /operator-timeline, /actual-operators,
+        /actual-operators-by-queue, /current-operators, /recent-stats;
+  исходящая аналитика:
+    GET /current-operators-outbound, /recent-stats-outbound,
+        /outbound-summary, /outbound-operators, /outbound-load;
+  потребность:
+    POST /customer-demand/upload;
+    GET /customer-demand, /customer-demand/template.xlsx;
+  сотрудники Naumen:
+    GET /naumen-employees.
+
+Historical PostgreSQL cached_call:
+  /projects, /queues, /outbound-projects, /workload, /operator-load,
+  /operator-load-by-queue, /status-summary, /operator-sessions,
+  /operator-timeline только с work_date, /actual-operators,
+  /actual-operators-by-queue, /outbound-summary, /outbound-operators,
+  /outbound-load.
+
+Всегда live без 10-минутного cache:
+  /current-operators, /current-operators-outbound, /recent-stats,
+  /recent-stats-outbound, /operator-timeline с hours, /naumen-employees.
+
+schedules.py — /schedules
+  CRUD графиков;
+  CRUD /shifts;
+  POST /shifts/{id}/confirm;
+  POST /shifts/reconcile;
+  GET /shifts/export.xlsx;
+  CRUD /absences.
+
+integrations.py — /integrations
+  GET/PUT настройки;
+  POST /test, /test-api;
+  GET /projects/available;
+  CRUD /tracked-projects.
+
+queue_settings.py — /queue-settings/{partner_uuid}
+  GET/PUT настройки очередей;
+  DELETE конкретной очереди.
+
+status_configs.py — /status-configs/{partner_uuid}
+  GET список и /discover;
+  PUT/DELETE классификации статуса.
+
+
+8. ДАННЫЕ WFM: ЛОКАЛЬНО И НА СЕРВЕРЕ
+====================================
+
+Файл по умолчанию:
+  wfm-telesales\backend\wfm.db
+
+Это только локальная SQLite разработчика. Production использует PostgreSQL.
+Новый `analytics_cache` создаётся только в production PostgreSQL и намеренно
+исключён из SQLite init_db, поэтому текущий локальный снимок остаётся 16 таблиц.
+
+Никогда не выводить значения полей с паролями, API keys, персональными данными,
+телефонами, email, ФИО и логинами без прямой необходимости.
+
+Таблицы и владельцы:
+  users                 аккаунты и роли;
+  user_projects         разрешённые проекты пользователя;
+  tracked_projects      проекты WFM, линии, SL, рабочее окно;
+  integration_settings  секретные параметры DB/API Naumen;
+  queue_settings        SL/порог/PVO/направление/hidden;
+  status_configs        проектная классификация статусов;
+  employees             сотрудники и project/team binding;
+  teams                 оргструктура;
+  team_users            пользователи, связанные с командой;
+  skills                глобальные/проектные навыки;
+  employee_skills       назначение навыков;
+  schedules             шаблоны графиков;
+  shifts                план/факт смен, line и queue_names;
+  absences              отсутствия;
+  customer_demand       потребность заказчика день/час;
+  audit_log             журнал аудита (сейчас может быть пустым).
+
+Только production PostgreSQL:
+  analytics_cache       общие JSON-снимки исторических API, TTL/retention/error;
+                        ключ содержит namespace/project/params только как hash.
+
+Снимок на 2026-08-13 (только количества, не содержимое):
+  users 2; user_projects 1; tracked_projects 2;
+  integration_settings 1; queue_settings 11 (hidden=4);
+  employees 164; teams 2; team_users 4;
+  skills 15 (все глобальные); employee_skills 5;
+  schedules 2; shifts 29; absences 0;
+  status_configs 2; customer_demand 0; audit_log 0.
+
+Проверка целостности на 2026-08-13:
+  foreign_key violations = 0;
+  сотрудников/команд/графиков без проекта = 0;
+  дубликатов queue_settings по (partner_uuid, queue_name) = 0;
+  битых ссылок shift/absence/employee_skill/user_project = 0;
+  все 16 локальных таблиц присутствуют в SQLite; 17-я модель analytics_cache
+  корректно отсутствует, потому что относится только к production PostgreSQL;
+  пустая analytics_cache, успевшая появиться при оборванной hot-reload сессии,
+  удалена 2026-08-13 после проверки `rows=0`; пользовательские строки не
+  изменялись, итоговый `PRAGMA integrity_check = ok`;
+  legacy-колонка employees.inn остаётся в старой DB, но отсутствует в модели и
+  не используется. Не удалять её без отдельной миграционной задачи.
+
+После любой правки локальной схемы обновить этот раздел реальным read-only
+снимком. Серверные таблицы не создавать в wfm.db ради проверки.
+
+
+9. ВНЕШНИЕ ДАННЫЕ NAUMEN И КАРТА ИНСТРУКЦИЙ
+===========================================
+
+Словарь Naumen содержит 70 таблиц, 655 полей, 20 core-таблиц.
+
+Назначение файлов:
+  README.md
+    индекс; читать только если непонятна структура пака;
+  00_master_instruction.md
+    читать целиком для НОВОГО отчёта/метрики, не для обычного UI bugfix;
+  01_schema_map.md
+    домены, view/table/function и логические связи;
+  02_metrics_glossary.md
+    бизнес-определение и формула конкретной метрики;
+  03_query_patterns.md
+    готовый каркас P1–P15;
+  04_query_library\00_index.md
+    стиль запросов автора и справочные идентификаторы;
+  05_common_pitfalls.md
+    финальный SQL review и запрещённые паттерны;
+  06_verification_workflow.md
+    только план проверки куратором; агент к Naumen не подключается;
+  07_site_reports_catalog.md
+    ожидаемые экраны/поля/API, но текущий код новее и при конфликте главнее;
+  08_current_approach_review.md
+    известные расхождения SQL сайта с каноном;
+  09_proposed_metrics.md
+    новые метрики, outbound, live и открытые вопросы;
+  10_data_dictionary.json
+    сначала использовать для точного машинного поиска поля;
+  10_data_dictionary.md
+    то же глазами;
+  query.md
+    описание существующих функций naumen_db.py; сверять с текущим кодом.
+
+Внутри пака есть 7 ссылок на файлы, которых в workspace нет:
+  ncc_schema.md;
+  NCC_REST_API_v2.md;
+  ncc_statistic_reports_ru.pdf;
+  старый notebook SQL_queries\Для sql внутри питона.ipynb (несколько ссылок).
+
+Не тратить время на повторный поиск этих файлов. Для схемы использовать 01 и
+10; для запросов — 03, query.md и текущий naumen_db.py.
+
+
+10. КАНОН КЛЮЧЕВЫХ МЕТРИК
+=========================
+
+Входящие:
+  calls      = COUNT(*) выбранных вызовов;
+  handled    = final_stage IN ('operator', 'redirect');
+  lost       = final_stage = 'queue';
+  ivr        = НЕ потеря, клиент не дошёл до очереди;
+  phantom    = final_stage='queue' AND queue <= 5 секунд;
+  comptarg   = handled в пределах per-queue answer_sec/calllimit;
+  SL         = comptarg / (calls - phantlost - ivr) * 100;
+  LCR        = (lost - phantlost) / calls * 100;
+  AHT        = SUM(speaking + wrapup) / handled;
+  hold       уже внутри speaking, повторно к AHT не прибавлять;
+  оператор   только плечо dst_abonent_type='SP';
+  end date   UI inclusive, SQL использует exclusive upper bound.
+
+Единицы:
+  в разных таблицах бывают ms и sec. Проверять словарь для каждой колонки;
+  detail_outbound_sessions_ms — временные значения требуют особого внимания;
+  не угадывать единицы по имени.
+
+Статусы:
+  проектные нестандартные статусы классифицируются через status_configs;
+  standard work/offline определены в status_classification.py;
+  «активный» нельзя считать простым status != offline;
+  длительность безопаснее считать через LEAD и границы окна.
+
+Исходящие:
+  контакт в текущем коде = speaking_time > 10 секунд;
+  бизнес-результат кейса — по последней попытке;
+  project_id и partneruuid нельзя смешивать;
+  dosm/attempt_result сверять с правилами 05/09.
+
+Любое изменение этих формул требует:
+  адресного чтения instruction pack;
+  теста;
+  отметки «нужна живая проверка куратором»;
+  обновления project-map.txt.
+
+
+11. ОСОБАЯ ЛОГИКА HIDDEN
+========================
+
+Хранение:
+  входящая очередь: queue_settings.queue_name = точное имя;
+  исходящий подпроект: queue_name = 'out:' + project_uuid;
+  hidden=true означает исключить из фильтров И статистических расчётов.
+
+Контракт списков:
+  обычная аналитика:
+    GET /analytics/queues
+    GET /analytics/outbound-projects
+    -> только видимые;
+  страница настроек:
+    те же endpoints с include_hidden=true
+    -> полный список, чтобы скрытый элемент можно было вернуть.
+
+Backend:
+  analytics.py вычисляет hidden names/ids;
+  naumen_db.py добавляет фильтр в каждую статистическую функцию;
+  пустой список outbound ids означает «ничего», а не «все»;
+  cache key включает hidden/project filter.
+
+Frontend:
+  ProjectSettingsPage использует include_hidden=true и отдельный query key;
+  аналитические фильтры получают только видимое;
+  после save инвалидируется весь React Query cache проекта.
+
+Тест:
+  backend\tests\test_hidden_filters.py
+  покрывает SQL-фильтры, пустой outbound filter и различие analytics/settings.
+
+
+12. БЕЗОПАСНОСТЬ И РИСКИ
+========================
+
+Обязательные правила:
+  - не логировать JWT/Authorization даже частично;
+  - не печатать .env и integration_settings;
+  - все SQL values передавать параметрами psycopg2;
+  - f-string допустим только для константного фрагмента SQL, выбранного кодом;
+  - проверять project scope на backend;
+  - FIRST_ADMIN_PASSWORD задаёт только первого admin и не выводится в лог;
+  - SECRET_KEY/FIRST_ADMIN_PASSWORD в production обязательно менять.
+
+Известные ограничения, не исправлять вслепую:
+  1) integrations.py для теста REST создаёт SSL context с CERT_NONE.
+     Причиной может быть частный сертификат. Правильное решение — доверенный CA,
+     но переключение требует проверки реальной инфраструктуры.
+  2) naumen_db.py использует `status_changes` во многих функциях, хотя пакет
+     рекомендует `status_changes_ms`. Массовая замена требует живой проверки.
+  3) APScheduler, `_sync_jobs`, refresh registry и вспомогательные live-карты
+     требуют одного backend worker. Исторические payload при этом общие в
+     PostgreSQL.
+  4) production `npm audit --omit=dev` после коммита e61a15b оставлял две
+     moderate advisory React Router; автоматическое полное исправление могло
+     потребовать breaking upgrade Router/Vite. Перед будущим upgrade проверить
+     актуальный audit и миграционные notes.
+  5) Vite production bundle около 1.06 MB и выдаёт warning >500 KB; это не
+     функциональная ошибка, оптимизировать отдельной задачей.
+  6) `create_all` создаёт новые PostgreSQL-таблицы, но не ALTER существующих
+     колонок. Перед будущим production update с изменением моделей нужен backup
+     и release-specific migration; подробнее SERVER_DEPLOYMENT_AGENT.md.
+
+
+13. ЛОКАЛЬНЫЙ ЗАПУСК
+====================
+
+Всё приложение:
+  C:\Users\robokoll\Desktop\dbeaver\wfm-telesales\start.bat
+
+Backend:
+  cd C:\Users\robokoll\Desktop\dbeaver\wfm-telesales\backend
+  .\venv\Scripts\python.exe run.py
+  http://localhost:8000
+  http://localhost:8000/docs
+
+Frontend:
+  cd C:\Users\robokoll\Desktop\dbeaver\wfm-telesales\frontend
+  npm run dev
+  http://localhost:5173
+
+Первичная установка:
+  backend:
+    python -m venv venv
+    .\venv\Scripts\python.exe -m pip install -r requirements.txt
+  frontend:
+    npm ci
+
+Конфигурация:
+  backend\.env.example -> backend\.env;
+  SECRET_KEY и FIRST_ADMIN_PASSWORD заменить;
+  NCC_* не выводить;
+  CORS_ORIGINS должен включать фактический frontend origin.
+
+
+14. ПОИСК ПО КОДУ БЕЗ ЛИШНЕГО ЧТЕНИЯ
+====================================
+
+Всегда использовать rg/rg --files.
+
+Найти текст/endpoint:
+  rg -n "ИСКОМЫЙ_ТЕКСТ" backend frontend\src
+
+Найти вызовы API страницы:
+  rg -n "api\.(get|post|put|delete)" frontend\src\pages\НУЖНЫЙ_ФАЙЛ.tsx
+
+Найти backend endpoint:
+  rg -n "@router\.(get|post|put|delete)" backend\app\api\v1
+
+Найти функцию Naumen:
+  rg -n "^def get_|^def sync_|^def test_" backend\app\services\naumen_db.py
+
+Найти таблицу/поле в словаре:
+  rg -n '"ИМЯ_ТАБЛИЦЫ"|"ИМЯ_ПОЛЯ"' WFM_instruction_pack\10_data_dictionary.json
+
+Список рабочих файлов без зависимостей:
+  rg --files -g "!frontend/node_modules/**" -g "!frontend/dist/**" -g "!backend/venv/**"
+
+
+15. ПРОВЕРКИ И DEFINITION OF DONE
+=================================
+
+Backend:
+  cd ...\wfm-telesales\backend
+  .\venv\Scripts\python.exe -m unittest discover -s tests -v
+  .\venv\Scripts\python.exe -m compileall -q app
+  .\venv\Scripts\python.exe -c "import app.main; print('backend import ok')"
+  .\venv\Scripts\python.exe -m pip check
+
+Frontend:
+  cd ...\wfm-telesales\frontend
+  npm run build
+  npm audit --omit=dev  (требует сеть; результат оценивать по severity/upgrade)
+
+UI:
+  - запустить backend и frontend;
+  - войти;
+  - выбрать проект;
+  - выполнить изменённый сценарий;
+  - обновить страницу;
+  - проверить Console и Network;
+  - если затронуты права — admin и ограниченная роль;
+  - если Naumen нужен для данных — UI можно проверить на корректную ошибку,
+    но метрику считать непроверенной.
+
+Git:
+  git diff --check
+  git status --short
+  git diff --stat
+  git diff
+
+Карта:
+  - обновлена дата/версия project-map.txt;
+  - добавлены/удалены маршруты, endpoint, таблицы, инструкции и команды;
+  - обновлены известные риски и состояние данных, если они изменились;
+  - старое имя fast-links-ft.txt отсутствует.
+
+Задача готова только после пропорциональной проверки, review diff и обновления
+этой карты.
+
+
+16. GIT И GITHUB
+================
+
+Рабочий каталог:
+  C:\Users\robokoll\Desktop\dbeaver\wfm-telesales
+
+Git может отсутствовать в PATH. Исполняемый файл на этом ПК:
+  C:\Users\robokoll\AppData\Local\GitHubDesktop\app-3.5.12\resources\app\git\cmd\git.exe
+
+PowerShell:
+  $git='C:\Users\robokoll\AppData\Local\GitHubDesktop\app-3.5.12\resources\app\git\cmd\git.exe'
+  & $git status --short
+
+Безопасная публикация:
+  1) status и diff;
+  2) тесты/build;
+  3) git fetch origin;
+  4) git rev-list --left-right --count HEAD...origin/main;
+  5) изучить новые remote commits, если есть;
+  6) git add только ожидаемые файлы;
+  7) git diff --cached --check;
+  8) git diff --cached;
+  9) commit;
+ 10) git push origin main;
+ 11) fetch + сравнить SHA + убедиться в чистом status.
+
+Не использовать без прямого разрешения:
+  git reset --hard;
+  git clean -fd;
+  git checkout -- <файл>;
+  force push.
+
+Не коммитить:
+  backend\.env, backend\wfm.db, *.log, node_modules, dist, venv,
+  персональные выгрузки, ключи и пароли.
+
+Последний подтверждённый baseline перед текущей серверной задачей:
+  e61a15b fix: скрывать подпроекты из аналитики.
+Актуальный опубликованный SHA всегда получать через `git rev-parse HEAD` и
+`git rev-parse origin/main`; не считать записанный в карте hash вечным.
+
+
+17. ДЕПЛОЙ
+===========
+
+Основной и канонический документ для чистого production:
+  wfm-telesales\SERVER_DEPLOYMENT_AGENT.md
+
+Старые DEPLOY_AI_AGENT.md / DEPLOY.md / DEPLOYMENT.md оставлены как справка и
+должны направлять к каноническому документу.
+
+Ключевые условия:
+  - рабочий путь в документации: /opt/wfm/app;
+  - backend ровно 1 worker;
+  - PostgreSQL только на production-сервере; локальную wfm.db не переносить;
+  - секреты только в environment file;
+  - WFM_DATABASE_URL, не DATABASE_URL;
+  - analytics_cache: PostgreSQL-only, TTL 600 sec, retention 31 days;
+  - employees: initial ручной sync, затем server scheduler каждые 60 минут;
+  - monitoring current/recent endpoints обходят исторический cache;
+  - frontend собирается npm run build и отдаётся Nginx;
+  - перед деплоем backup WFM DB;
+  - после деплоя health, login, project selection, основные страницы;
+  - живые Naumen-метрики проверяет пользователь/куратор в своей сети;
+  - WFM_instruction_pack на сервер для обычного деплоя не требуется.
+
+
+18. ПРОТОКОЛ ОБНОВЛЕНИЯ ЭТОЙ КАРТЫ
+=================================
+
+После изменения кода или инструкций агент обязан:
+  1) определить затронутые разделы project-map.txt;
+  2) обновить маршрутизацию задачи, пути и правила;
+  3) если изменён frontend route — обновить раздел 6;
+  4) если изменён API — обновить раздел 7;
+  5) если изменена модель/миграция/смысл таблицы — обновить раздел 8 и повторить
+     read-only integrity snapshot;
+  6) если изменена инструкция/формула — обновить разделы 3, 9 и 10;
+  7) если изменены security/deps/ограничения — обновить раздел 12;
+  8) если изменены команды запуска/test/deploy/Git — обновить 13–17;
+  9) поставить новую дату версии в начале файла;
+ 10) проверить, что пути существуют и старые указания удалены.
+
+Если правка не меняет карту (например, исправлена опечатка в подписи), агент
+всё равно должен проверить project-map.txt и в итоговом ответе явно сказать,
+что карта проверена и смысловых изменений для неё нет.
+
+Запрещено:
+  - оставлять в карте заведомо устаревший маршрут «на потом»;
+  - копировать секреты или персональные данные;
+  - превращать карту в журнал всех коммитов;
+  - дублировать здесь весь instruction pack;
+  - возвращать файл fast-links-ft.txt;
+  - выносить project-map.txt из Git-репозитория.
+
+
+19. ТЕКУЩИЙ КОНТРОЛЬНЫЙ СНИМОК
+=============================
+
+Дата: 2026-08-13
+Приложение: wfm-telesales
+Git baseline: main, e61a15b; текущая задача добавляет server deployment/cache
+Frontend: production build проходил после e61a15b
+Backend: 12 тестов проходят, включая hidden и PostgreSQL-cache isolation
+Local DB: 16 локальных таблиц, analytics_cache отсутствует как задумано,
+          integrity violations 0; удалена только ошибочная пустая cache-таблица
+Hidden settings: 4; тесты hidden присутствуют
+Naumen: недоступен агенту по постоянному условию пользователя
+Instruction pack: 70 таблиц, 655 полей, 20 core; 7 внешних ссылок отсутствуют
+
+Следующий агент начинает с раздела 0, затем выбирает ровно один маршрут из
+раздела 3 и читает только перечисленные там материалы.
