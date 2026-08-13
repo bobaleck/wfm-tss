@@ -392,6 +392,8 @@ project-map.txt лежит в корне wfm-telesales, входит в Git-ре
 3.14. Деплой, конфигурация, зависимости или GitHub
 -------------------------------------------------
 Деплой:
+  SERVER_AGENT_PROMPT.txt — готовый первый запрос, который владелец копирует
+    production-агенту; сначала заменить значения в квадратных скобках;
   SERVER_DEPLOYMENT_AGENT.md — ЕДИНСТВЕННЫЙ канонический runbook для чистого
     production-сервера и автономного ИИ-агента;
   DEPLOY_AI_AGENT.md, DEPLOY.md, DEPLOYMENT.md — старые справочные документы;
@@ -488,6 +490,7 @@ dbeaver\
     query.md                         описание функций naumen_db.py
   wfm-telesales\                    приложение и Git repo
     project-map.txt                  эта карта, читать первой; хранится в Git
+    SERVER_AGENT_PROMPT.txt          готовый запрос серверному ИИ-агенту
     backend\
       app\
         api\deps.py                  auth, роли, проектный scope
@@ -524,7 +527,7 @@ dbeaver\
     SERVER_DEPLOYMENT_AGENT.md       канонический clean-server runbook
     start.bat / start-backend.bat / start-frontend.bat
 
-В проекте 116 файлов без node_modules/dist/venv на момент снимка 2026-08-13.
+В проекте 117 файлов без node_modules/dist/venv на момент снимка 2026-08-13.
 
 
 6. КАРТА FRONTEND-МАРШРУТОВ
@@ -1018,6 +1021,12 @@ PowerShell:
 
 Основной и канонический документ для чистого production:
   wfm-telesales\SERVER_DEPLOYMENT_AGENT.md
+
+Готовый запрос, который пользователь отправляет серверному ИИ:
+  wfm-telesales\SERVER_AGENT_PROMPT.txt
+Перед отправкой заполнить домен/email/статус Git/Naumen/admin/projects в начале
+файла. Если значения неизвестны, серверный агент обязан запросить только
+реальные блокеры и продолжить независимые этапы.
 
 Старые DEPLOY_AI_AGENT.md / DEPLOY.md / DEPLOYMENT.md оставлены как справка и
 должны направлять к каноническому документу.
