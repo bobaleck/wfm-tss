@@ -149,6 +149,34 @@ sudo -u wfm -H cat /home/wfm/.ssh/id_ed25519.pub
 выполнить обычную проверку SSH host key и доступа. Не отключать
 `StrictHostKeyChecking`.
 
+Если исходящий SSH-порт 22 заблокирован, использовать официальный SSH endpoint
+GitHub на 443. Сначала получить ключ и сверить fingerprint с актуальной
+страницей https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints.
+Для Ed25519 на момент этой инструкции ожидается
+`SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU`:
+
+```bash
+sudo -u wfm -H bash -c '
+set -euo pipefail
+ssh-keyscan -t ed25519 -p 443 ssh.github.com > /tmp/github_host_key
+ssh-keygen -lf /tmp/github_host_key
+# Продолжать только после точного совпадения с официальным fingerprint.
+install -m 600 /tmp/github_host_key /home/wfm/.ssh/github_known_hosts
+rm -f /tmp/github_host_key
+cat > /home/wfm/.ssh/config <<EOF
+Host github.com
+  HostName ssh.github.com
+  User git
+  Port 443
+  StrictHostKeyChecking yes
+  UserKnownHostsFile /home/wfm/.ssh/github_known_hosts
+EOF
+chmod 600 /home/wfm/.ssh/config
+'
+```
+
+Если fingerprint не совпал, остановиться: ключ не принимать и не клонировать.
+
 ```bash
 sudo -u wfm -H ssh -T git@github.com || true
 sudo -u wfm -H git clone --branch main --single-branch \

@@ -978,6 +978,12 @@ PowerShell:
   $git='C:\Users\robokoll\AppData\Local\GitHubDesktop\app-3.5.12\resources\app\git\cmd\git.exe'
   & $git status --short
 
+Если сеть блокирует github.com:22, использовать `ssh.github.com:443`, не
+отключая StrictHostKeyChecking. Fingerprint сверять с официальной GitHub Docs;
+проверенный Ed25519 на 2026-08-13:
+  SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU
+Серверный алгоритм и команды описаны в SERVER_DEPLOYMENT_AGENT.md, раздел 5.
+
 Безопасная публикация:
   1) status и diff;
   2) тесты/build;
